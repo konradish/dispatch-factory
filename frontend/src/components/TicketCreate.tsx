@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { createTicket } from "@/lib/api";
 import type { TicketResponse } from "@/types";
+// TicketResponse has { status, stdout, stderr } from the real backend
 
 const PROJECTS = [
   "recipebrain",
@@ -17,11 +18,7 @@ const FLAGS = [
   { value: "--no-plan", label: "Skip planner" },
 ];
 
-interface TicketCreateProps {
-  onWatchTerminal: (sessionId: string) => void;
-}
-
-export default function TicketCreate({ onWatchTerminal }: TicketCreateProps) {
+export default function TicketCreate() {
   const [task, setTask] = useState("");
   const [project, setProject] = useState(PROJECTS[0]);
   const [flags, setFlags] = useState<string[]>([]);
@@ -166,16 +163,10 @@ export default function TicketCreate({ onWatchTerminal }: TicketCreateProps) {
       {/* Success */}
       {result && result.status === "dispatched" && (
         <div className="mt-4 bg-accent-green/10 border border-accent-green/30 rounded-lg px-4 py-4 space-y-3">
-          <div className="text-sm text-accent-green">{result.message}</div>
-          <div className="mono text-xs text-gray-400">
-            Session: {result.session_id}
-          </div>
-          <button
-            onClick={() => onWatchTerminal(result.session_id)}
-            className="px-4 py-2 text-xs mono bg-bg-surface-alt hover:bg-gray-700 border border-gray-700 rounded transition-colors"
-          >
-            Watch in Terminal
-          </button>
+          <div className="text-sm text-accent-green">Dispatched successfully</div>
+          {result.stdout && (
+            <pre className="mono text-xs text-gray-400 whitespace-pre-wrap">{result.stdout}</pre>
+          )}
         </div>
       )}
     </div>

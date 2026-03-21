@@ -1,19 +1,26 @@
-export interface Session {
+// Matches /api/sessions response
+export interface SessionSummary {
   id: string;
   project: string;
-  task: string;
-  station: string;
-  status:
-    | "processing"
-    | "healing"
-    | "queued"
-    | "held"
-    | "completed"
-    | "failed";
-  elapsed_seconds: number;
-  started_at: string;
+  type: "worker" | "deploy" | "validate";
+  state: string; // running, planning, reviewing, verifying, monitoring, completed, deployed, rolled_back, error
+  artifact_types: string[];
+  has_log: boolean;
+}
+
+// Matches /api/sessions/:id response
+export interface SessionDetail {
+  id: string;
+  state: string;
   artifacts: Record<string, unknown>;
-  held: boolean;
+  has_log: boolean;
+  log_size: number;
+}
+
+// Matches /api/sessions/active response
+export interface ActiveSession {
+  id: string;
+  active: boolean;
 }
 
 export interface TicketRequest {
@@ -23,13 +30,12 @@ export interface TicketRequest {
 }
 
 export interface TicketResponse {
-  session_id: string;
   status: "dispatched" | "error";
-  message: string;
+  stdout: string;
+  stderr: string;
 }
 
 export interface TerminalInfo {
   session_name: string;
   port: number;
-  read_only: boolean;
 }

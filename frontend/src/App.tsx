@@ -3,8 +3,6 @@ import PipelineList from "@/components/PipelineList";
 import TicketCreate from "@/components/TicketCreate";
 import TerminalPanel from "@/components/TerminalPanel";
 import type { TerminalTab } from "@/components/TerminalPanel";
-import { attachTerminal } from "@/lib/api";
-
 type Tab = "pipeline" | "create";
 
 export default function App() {
@@ -48,13 +46,6 @@ export default function App() {
     setTerminalTabs((prev) =>
       prev.filter((t) => t.sessionName !== sessionName)
     );
-  }
-
-  async function handleWatchTerminal(sessionId: string) {
-    const result = await attachTerminal(sessionId);
-    if (result.data) {
-      handleAttachTerminal(result.data.session_name, result.data.port);
-    }
   }
 
   return (
@@ -117,7 +108,7 @@ export default function App() {
         {activeTab === "pipeline" ? (
           <PipelineList onAttachTerminal={handleAttachTerminal} />
         ) : (
-          <TicketCreate onWatchTerminal={handleWatchTerminal} />
+          <TicketCreate />
         )}
       </main>
 

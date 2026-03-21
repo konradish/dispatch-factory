@@ -1,8 +1,9 @@
 import type {
-  Session,
+  SessionSummary,
+  SessionDetail,
+  ActiveSession,
   TicketRequest,
   TicketResponse,
-  TerminalInfo,
 } from "@/types";
 
 interface ApiResult<T> {
@@ -33,16 +34,16 @@ async function request<T>(
   }
 }
 
-export function fetchSessions(): Promise<ApiResult<Session[]>> {
-  return request<Session[]>("/api/sessions");
+export function fetchSessions(): Promise<ApiResult<SessionSummary[]>> {
+  return request<SessionSummary[]>("/api/sessions");
 }
 
-export function fetchSession(id: string): Promise<ApiResult<Session>> {
-  return request<Session>(`/api/sessions/${id}`);
+export function fetchSession(id: string): Promise<ApiResult<SessionDetail>> {
+  return request<SessionDetail>(`/api/sessions/${id}`);
 }
 
-export function fetchActiveSessions(): Promise<ApiResult<Session[]>> {
-  return request<Session[]>("/api/sessions/active");
+export function fetchActiveSessions(): Promise<ApiResult<ActiveSession[]>> {
+  return request<ActiveSession[]>("/api/sessions/active");
 }
 
 export function createTicket(
@@ -54,34 +55,41 @@ export function createTicket(
   });
 }
 
-export function holdSession(id: string): Promise<ApiResult<{ ok: boolean }>> {
-  return request<{ ok: boolean }>(`/api/sessions/${id}/hold`, {
-    method: "POST",
-  });
+export function holdSession(
+  id: string
+): Promise<ApiResult<{ status: string; output: string }>> {
+  return request<{ status: string; output: string }>(
+    `/api/sessions/${id}/hold`,
+    { method: "POST" }
+  );
 }
 
-export function killSession(id: string): Promise<ApiResult<{ ok: boolean }>> {
-  return request<{ ok: boolean }>(`/api/sessions/${id}/kill`, {
-    method: "POST",
-  });
+export function killSession(
+  id: string
+): Promise<ApiResult<{ status: string; output: string }>> {
+  return request<{ status: string; output: string }>(
+    `/api/sessions/${id}/kill`,
+    { method: "POST" }
+  );
 }
 
 export function attachTerminal(
   name: string
-): Promise<ApiResult<TerminalInfo>> {
-  return request<TerminalInfo>(`/api/terminal/${name}/attach`, {
-    method: "POST",
-  });
+): Promise<ApiResult<{ port: number; session: string }>> {
+  return request<{ port: number; session: string }>(
+    `/api/terminal/${name}/attach`,
+    { method: "POST" }
+  );
 }
 
 export function detachTerminal(
   name: string
-): Promise<ApiResult<{ ok: boolean }>> {
-  return request<{ ok: boolean }>(`/api/terminal/${name}/detach`, {
+): Promise<ApiResult<{ status: string }>> {
+  return request<{ status: string }>(`/api/terminal/${name}/detach`, {
     method: "POST",
   });
 }
 
-export function fetchTerminals(): Promise<ApiResult<TerminalInfo[]>> {
-  return request<TerminalInfo[]>("/api/terminal");
+export function fetchTerminals(): Promise<ApiResult<Record<string, number>>> {
+  return request<Record<string, number>>("/api/terminal");
 }

@@ -26,6 +26,10 @@ ARTIFACT_TYPES: dict[str, str] = {
 # e.g. "worker-recipebrain-1430" or "deploy-electricapp-0847"
 SESSION_RE = re.compile(r"^((?:worker|deploy|validate)-[a-z][a-z0-9-]*-\d+)")
 
+# Extract project name from session ID: "worker-recipebrain-1430" → "recipebrain"
+# Handles hyphens in project names: "worker-voice-bridge-0738" → "voice-bridge"
+SESSION_PARTS_RE = re.compile(r"^(?:worker|deploy|validate)-(.+)-(\d+)$")
+
 
 def _artifacts_path() -> Path:
     return Path(settings.artifacts_dir)
@@ -87,7 +91,16 @@ def list_sessions() -> list[dict]:
             continue
         session_id = m.group(1)
         if session_id not in sessions:
-            sessions[session_id] = {"id": session_id, "artifacts": {}, "has_log": False}
+            parts = SESSION_PARTS_RE.match(session_id)
+            project = parts.group(1) if parts else "unknown"
+            session_type = "deploy" if session_id.startswith("deploy-") else "validate" if session_id.startswith("validate-") else "worker"
+            sessions[session_id] = {
+                "id": session_id,
+                "project": project,
+                "type": session_type,
+                "artifacts": {},
+                "has_log": False,
+            }
 
         # Check for known artifact suffixes.
         suffix_part = entry.name[len(session_id):]
