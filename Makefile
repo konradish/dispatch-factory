@@ -15,6 +15,7 @@ dev-backend:
 	cd backend && uv run uvicorn main:app --host 127.0.0.1 --port 8420 --reload
 
 dev-frontend:
+	rm -rf frontend/dist
 	cd frontend && npm run dev
 
 lint:
