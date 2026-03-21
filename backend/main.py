@@ -251,7 +251,7 @@ async def create_ticket(req: TicketRequest) -> dict[str, str]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=120,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="dispatch binary not found")
