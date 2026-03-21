@@ -2,7 +2,7 @@
 
 A real-time control plane for autonomous SDLC pipelines. Watch AI coding agents work, dispatch new tasks, and stream live terminal sessions — all from your browser.
 
-![Active workers with terminal](https://github.com/user-attachments/assets/placeholder-factory-screenshot.png)
+![Active workers with terminal](https://github.com/user-attachments/assets/83a87bce-af08-4e99-afe5-3cdf209cfaee)
 
 ## What is this?
 
