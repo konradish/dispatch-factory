@@ -150,8 +150,9 @@ async def health() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/sessions")
-async def list_sessions() -> list[dict]:
-    return artifacts.list_sessions()
+async def list_sessions(limit: int = 20) -> list[dict]:
+    all_sessions = artifacts.list_sessions()
+    return all_sessions[:limit]
 
 
 @app.get("/api/sessions/active")

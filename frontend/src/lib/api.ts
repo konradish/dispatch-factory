@@ -34,8 +34,8 @@ async function request<T>(
   }
 }
 
-export function fetchSessions(): Promise<ApiResult<SessionSummary[]>> {
-  return request<SessionSummary[]>("/api/sessions");
+export function fetchSessions(limit = 20): Promise<ApiResult<SessionSummary[]>> {
+  return request<SessionSummary[]>(`/api/sessions?limit=${limit}`);
 }
 
 export function fetchSession(id: string): Promise<ApiResult<SessionDetail>> {
