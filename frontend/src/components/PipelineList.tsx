@@ -98,17 +98,11 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
     return () => clearInterval(interval);
   }, [load]);
 
-  // Split into live (has tmux session or running state) and historical
-  const live = sessions.filter(
-    (s) =>
-      activeTmux.has(s.id) ||
-      ["running", "planning", "reviewing", "verifying", "monitoring"].includes(
-        s.state
-      )
-  );
+  // Only sessions with a live tmux process are truly active
+  const live = sessions.filter((s) => activeTmux.has(s.id));
   const recent = sessions
-    .filter((s) => !live.includes(s))
-    .slice(0, 30);
+    .filter((s) => !activeTmux.has(s.id))
+    .slice(0, 50);
 
   async function handleHold(id: string) {
     const result = await holdSession(id);
