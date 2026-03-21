@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
 from config import settings
 
@@ -42,10 +41,6 @@ def start_ttyd(session_name: str) -> int | None:
     port = _next_port()
     if port is None:
         return None
-
-    # Prefer tailing the log file — Claude Code's --print mode writes there,
-    # not to the tmux pty. Falls back to tmux attach if no log exists.
-    log_file = Path(settings.artifacts_dir) / f"{session_name}.log"
 
     cmd = [settings.terminal.ttyd_bin]
     if settings.terminal.read_only:

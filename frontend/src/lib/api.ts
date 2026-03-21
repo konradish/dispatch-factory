@@ -4,6 +4,9 @@ import type {
   ActiveSession,
   TicketRequest,
   TicketResponse,
+  HistorySession,
+  Brief,
+  LogEvent,
 } from "@/types";
 
 interface ApiResult<T> {
@@ -92,4 +95,20 @@ export function detachTerminal(
 
 export function fetchTerminals(): Promise<ApiResult<Record<string, number>>> {
   return request<Record<string, number>>("/api/terminal");
+}
+
+export function fetchHistory(
+  limit = 50
+): Promise<ApiResult<HistorySession[]>> {
+  return request<HistorySession[]>(`/api/sessions/history?limit=${limit}`);
+}
+
+export function fetchBrief(): Promise<ApiResult<Brief>> {
+  return request<Brief>("/api/brief");
+}
+
+export function fetchFactoryLog(
+  limit = 100
+): Promise<ApiResult<LogEvent[]>> {
+  return request<LogEvent[]>(`/api/log?limit=${limit}`);
 }

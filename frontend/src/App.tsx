@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import PipelineList from "@/components/PipelineList";
 import TicketCreate from "@/components/TicketCreate";
+import HistoryView from "@/components/HistoryView";
+import FactoryLog from "@/components/FactoryLog";
 import TerminalPanel from "@/components/TerminalPanel";
 import type { TerminalTab } from "@/components/TerminalPanel";
 import { attachTerminal } from "@/lib/api";
-type Tab = "pipeline" | "create";
+type Tab = "pipeline" | "create" | "history" | "log";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
@@ -103,6 +105,26 @@ export default function App() {
             >
               Create Ticket
             </button>
+            <button
+              onClick={() => setActiveTab("history")}
+              className={`px-4 py-1.5 text-sm rounded transition-colors ${
+                activeTab === "history"
+                  ? "bg-bg-surface-alt text-gray-200"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              History
+            </button>
+            <button
+              onClick={() => setActiveTab("log")}
+              className={`px-4 py-1.5 text-sm rounded transition-colors ${
+                activeTab === "log"
+                  ? "bg-bg-surface-alt text-gray-200"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Factory Log
+            </button>
             <div className="w-px h-5 bg-gray-800 mx-2" />
             <button
               onClick={toggleTerminal}
@@ -121,11 +143,14 @@ export default function App() {
 
       {/* Main content */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-6">
-        {activeTab === "pipeline" ? (
+        {activeTab === "pipeline" && (
           <PipelineList onAttachTerminal={handleAttachTerminal} />
-        ) : (
+        )}
+        {activeTab === "create" && (
           <TicketCreate onDispatched={handleDispatched} />
         )}
+        {activeTab === "history" && <HistoryView />}
+        {activeTab === "log" && <FactoryLog />}
       </main>
 
       {/* Keyboard hints */}

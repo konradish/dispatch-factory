@@ -157,9 +157,27 @@ async def list_sessions() -> list[dict]:
     return [s for s in all_sessions if s["id"] in active_ids]
 
 
+@app.get("/api/sessions/history")
+async def session_history(limit: int = 50) -> list[dict]:
+    """All sessions with full artifact summaries, sorted by recency."""
+    return artifacts.list_sessions_with_timestamps()[:limit]
+
+
 @app.get("/api/sessions/active")
 async def active_sessions() -> list[dict]:
     return artifacts.get_active_sessions()
+
+
+@app.get("/api/brief")
+async def brief() -> dict[str, Any]:
+    """Autopilot brief + factory summary stats."""
+    return artifacts.get_brief()
+
+
+@app.get("/api/log")
+async def factory_log(limit: int = 100) -> list[dict]:
+    """Timeline of factory events across all sessions."""
+    return artifacts.get_factory_log(limit=limit)
 
 
 @app.get("/api/sessions/{session_id}")
