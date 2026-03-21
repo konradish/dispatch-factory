@@ -56,14 +56,26 @@ def load_config() -> Config:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
-    terminal_raw = raw.pop("terminal", {})
-    terminal = TerminalConfig(**{
-        k: v for k, v in terminal_raw.items()
-        if k in TerminalConfig.__dataclass_fields__
-    })
+    # Flatten TOML sections: [dispatch], [server], [terminal] → flat dict
+    flat: dict = {}
+    for key, val in raw.items():
+        if isinstance(val, dict) and key != "terminal":
+            flat.update(val)
+        elif key != "terminal":
+            flat[key] = val
+
+    terminal_raw = raw.get("terminal", {})
+    # Map config field names to dataclass field names
+    term_map = {"port_start": "port_range_start", "port_end": "port_range_end"}
+    terminal_kwargs = {}
+    for k, v in terminal_raw.items():
+        field_name = term_map.get(k, k)
+        if field_name in TerminalConfig.__dataclass_fields__:
+            terminal_kwargs[field_name] = v
+    terminal = TerminalConfig(**terminal_kwargs)
 
     known_fields = Config.__dataclass_fields__.keys() - {"terminal"}
-    cfg_kwargs = {k: v for k, v in raw.items() if k in known_fields}
+    cfg_kwargs = {k: v for k, v in flat.items() if k in known_fields}
     return Config(**cfg_kwargs, terminal=terminal)
 
 
