@@ -19,11 +19,18 @@ class TtydInstance:
 _instances: dict[str, TtydInstance] = {}
 
 
+def _port_in_use(port: int) -> bool:
+    """Check if a port is already bound."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _next_port() -> int | None:
     """Find the next available port in the configured range."""
     used = {inst.port for inst in _instances.values()}
     for port in range(settings.terminal.port_range_start, settings.terminal.port_range_end + 1):
-        if port not in used:
+        if port not in used and not _port_in_use(port):
             return port
     return None
 
@@ -49,6 +56,8 @@ def start_ttyd(session_name: str) -> int | None:
 
     cmd.extend(["tmux", "attach", "-t", session_name])
 
+    import time
+
     try:
         proc = subprocess.Popen(
             cmd,
@@ -56,6 +65,12 @@ def start_ttyd(session_name: str) -> int | None:
             stderr=subprocess.DEVNULL,
         )
     except (FileNotFoundError, OSError):
+        return None
+
+    # Give ttyd a moment to bind the port or die
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        # Process died — port conflict or bad session name
         return None
 
     _instances[session_name] = TtydInstance(process=proc, port=port, session_name=session_name)
