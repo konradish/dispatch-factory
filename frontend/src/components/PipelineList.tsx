@@ -102,7 +102,7 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
   const live = sessions.filter((s) => activeTmux.has(s.id));
   const recent = sessions
     .filter((s) => !activeTmux.has(s.id))
-    .slice(0, 50);
+    .slice(0, 15);
 
   async function handleHold(id: string) {
     const result = await holdSession(id);
@@ -226,56 +226,69 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
         )}
       </div>
 
-      {/* Recent Sessions */}
+      {/* Recent Sessions — compact table */}
       {recent.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Recent ({recent.length})
+            Recent
           </h2>
-          <div className="grid gap-1">
-            {recent.map((session) => {
-              const sl = STATE_LABELS[session.state] ?? {
-                label: session.state,
-                color: "bg-gray-600",
-              };
-              return (
-                <div
-                  key={session.id}
-                  className="bg-bg-surface/50 rounded border border-gray-800/50 px-3 py-2 flex items-center justify-between group hover:border-gray-700 transition-colors"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div
-                      className="h-2 w-2 rounded-full shrink-0"
-                      style={{
-                        backgroundColor:
-                          PROJECT_COLORS[session.project] ?? "#6b7280",
-                      }}
-                    />
-                    <span className="mono text-xs text-gray-500 shrink-0">
-                      {session.project}
-                    </span>
-                    <span className="mono text-[11px] text-gray-600 truncate">
-                      {session.id}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <StageProgress artifactTypes={session.artifact_types} />
-                    <span
-                      className={`text-xs ${
-                        session.state === "deployed"
-                          ? "text-accent-green"
-                          : session.state === "error" ||
-                              session.state === "rolled_back"
-                            ? "text-accent-red"
-                            : "text-gray-500"
-                      }`}
+          <div className="bg-bg-surface rounded-lg border border-gray-800 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] text-gray-600 uppercase tracking-wider border-b border-gray-800">
+                  <th className="text-left py-2 px-3 w-8"></th>
+                  <th className="text-left py-2 px-3">Session</th>
+                  <th className="text-left py-2 px-3">Pipeline</th>
+                  <th className="text-right py-2 px-3">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recent.map((session) => {
+                  const sl = STATE_LABELS[session.state] ?? {
+                    label: session.state,
+                    color: "bg-gray-600",
+                  };
+                  return (
+                    <tr
+                      key={session.id}
+                      className="border-b border-gray-800/30 hover:bg-bg-surface-alt/30 transition-colors"
                     >
-                      {sl.label}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+                      <td className="py-1.5 px-3">
+                        <div
+                          className="h-2 w-2 rounded-full"
+                          style={{
+                            backgroundColor:
+                              PROJECT_COLORS[session.project] ?? "#6b7280",
+                          }}
+                        />
+                      </td>
+                      <td className="py-1.5 px-3 mono text-gray-500">
+                        {session.id}
+                      </td>
+                      <td className="py-1.5 px-3">
+                        <StageProgress
+                          artifactTypes={session.artifact_types}
+                        />
+                      </td>
+                      <td className="py-1.5 px-3 text-right">
+                        <span
+                          className={`${
+                            session.state === "deployed"
+                              ? "text-accent-green"
+                              : session.state === "error" ||
+                                  session.state === "rolled_back"
+                                ? "text-accent-red"
+                                : "text-gray-600"
+                          }`}
+                        >
+                          {sl.label}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
