@@ -226,8 +226,8 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
         )}
       </div>
 
-      {/* Recent Sessions — only show when there are active sessions for context */}
-      {recent.length > 0 && live.length > 0 && (
+      {/* Recent Sessions — disabled for now, too noisy */}
+      {false && recent.length > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
             Recent
