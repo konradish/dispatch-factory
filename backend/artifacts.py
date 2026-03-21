@@ -227,6 +227,21 @@ def get_active_sessions() -> list[dict]:
     return sessions
 
 
+def get_known_projects() -> list[str]:
+    """Scan artifacts to discover all known project names."""
+    artifacts_dir = _artifacts_path()
+    if not artifacts_dir.is_dir():
+        return []
+    projects: set[str] = set()
+    for entry in artifacts_dir.iterdir():
+        m = SESSION_RE.match(entry.name)
+        if m:
+            parts = SESSION_PARTS_RE.match(m.group(1))
+            if parts:
+                projects.add(parts.group(1))
+    return sorted(projects)
+
+
 def get_autopilot_state() -> dict | None:
     """Read autopilot-state.json if it exists."""
     path = _artifacts_path() / "autopilot-state.json"

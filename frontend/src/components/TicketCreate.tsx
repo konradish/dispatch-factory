@@ -1,11 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createTicket } from "@/lib/api";
 import type { TicketResponse } from "@/types";
-// TicketResponse has { status, stdout, stderr } from the real backend
-
-// Project list — users will customize this for their setup.
-// TODO: fetch from backend /api/projects endpoint
-const PROJECTS = ["my-project"];
 
 const FLAGS = [
   { value: "--no-merge", label: "No merge (draft PR only)" },
@@ -18,8 +13,19 @@ interface TicketCreateProps {
 }
 
 export default function TicketCreate({ onDispatched }: TicketCreateProps) {
+  const [projects, setProjects] = useState<string[]>([]);
   const [task, setTask] = useState("");
-  const [project, setProject] = useState(PROJECTS[0]);
+  const [project, setProject] = useState("");
+
+  useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data: string[]) => {
+        setProjects(data);
+        if (data.length > 0 && !project) setProject(data[0]);
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [flags, setFlags] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<TicketResponse | null>(null);
@@ -93,7 +99,7 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
             onChange={(e) => setProject(e.target.value)}
             className="w-full bg-bg-surface border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue/50 mono"
           >
-            {PROJECTS.map((p) => (
+            {projects.map((p) => (
               <option key={p} value={p}>
                 {p}
               </option>

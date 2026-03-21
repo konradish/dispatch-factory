@@ -31,3 +31,6 @@ Thumbs.db
 
 # Claude
 .claude-sessions/
+
+# Scratch files (drafts, notes, not source code)
+.scratch/

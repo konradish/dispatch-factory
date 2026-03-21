@@ -145,6 +145,12 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/projects")
+async def list_projects() -> list[str]:
+    """List known projects from dispatch --projects or artifact scan."""
+    return artifacts.get_known_projects()
+
+
 # ---------------------------------------------------------------------------
 # Read endpoints (always available)
 # ---------------------------------------------------------------------------

@@ -106,7 +106,7 @@ function BriefCard({ brief }: { brief: Brief }) {
         </span>
         <span className="text-gray-400">
           <span className="mono text-gray-200">
-            {Math.round(stats.success_rate * 100)}%
+            {stats.success_rate}%
           </span>{" "}
           success
         </span>
