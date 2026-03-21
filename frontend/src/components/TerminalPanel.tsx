@@ -148,12 +148,17 @@ export default function TerminalPanel({
               : "Terminal not available. Start ttyd or enable terminal in config."}
           </div>
         ) : (
-          <iframe
-            key={activeTerminal.sessionName}
-            src={`http://127.0.0.1:${activeTerminal.port}`}
-            className="w-full h-full border-0"
-            title={`Terminal: ${activeTerminal.sessionName}`}
-          />
+          <div className="relative w-full h-full">
+            <div className="absolute top-2 right-3 z-10 text-[10px] mono text-gray-600 bg-black/80 px-2 py-1 rounded pointer-events-none">
+              Claude Code --print mode: terminal is quiet while thinking, output appears when done
+            </div>
+            <iframe
+              key={activeTerminal.sessionName}
+              src={`http://127.0.0.1:${activeTerminal.port}`}
+              className="w-full h-full border-0"
+              title={`Terminal: ${activeTerminal.sessionName}`}
+            />
+          </div>
         )}
       </div>
     </div>
