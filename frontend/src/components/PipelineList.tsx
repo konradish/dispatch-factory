@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { SessionSummary, ActiveSession } from "@/types";
 import {
   fetchSessions,
@@ -6,6 +6,8 @@ import {
   holdSession,
   attachTerminal,
 } from "@/lib/api";
+import { useFactorySocket } from "@/lib/useFactorySocket";
+import { useNotifications } from "@/lib/useNotifications";
 
 const STATE_LABELS: Record<string, { label: string; color: string }> = {
   running: { label: "Running", color: "bg-accent-green" },
@@ -91,11 +93,11 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, 5000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Real-time updates via WebSocket, falls back to 5s polling
+  useFactorySocket(load);
+
+  // Browser notifications when workers start/finish
+  useNotifications(sessions);
 
   // Only sessions with a live tmux process are truly active
   const live = sessions.filter((s) => activeTmux.has(s.id));
