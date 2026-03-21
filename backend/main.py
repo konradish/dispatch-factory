@@ -150,13 +150,11 @@ async def health() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/sessions")
-async def list_sessions(limit: int = 20) -> list[dict]:
+async def list_sessions() -> list[dict]:
     all_sessions = artifacts.list_sessions()
-    # Always include sessions that have a live tmux process
     active_ids = {s["id"] for s in artifacts.get_active_sessions()}
-    active = [s for s in all_sessions if s["id"] in active_ids]
-    rest = [s for s in all_sessions if s["id"] not in active_ids]
-    return active + rest[:limit]
+    # Only return sessions with a live tmux process
+    return [s for s in all_sessions if s["id"] in active_ids]
 
 
 @app.get("/api/sessions/active")
