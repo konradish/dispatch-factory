@@ -4,6 +4,7 @@ export interface SessionSummary {
   project: string;
   type: "worker" | "deploy" | "validate";
   state: string; // running, planning, reviewing, verifying, monitoring, completed, deployed, rolled_back, error
+  task: string;
   artifact_types: string[];
   has_log: boolean;
 }

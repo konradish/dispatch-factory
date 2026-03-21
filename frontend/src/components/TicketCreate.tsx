@@ -18,7 +18,11 @@ const FLAGS = [
   { value: "--no-plan", label: "Skip planner" },
 ];
 
-export default function TicketCreate() {
+interface TicketCreateProps {
+  onDispatched: (stdout: string) => void;
+}
+
+export default function TicketCreate({ onDispatched }: TicketCreateProps) {
   const [task, setTask] = useState("");
   const [project, setProject] = useState(PROJECTS[0]);
   const [flags, setFlags] = useState<string[]>([]);
@@ -50,19 +54,13 @@ export default function TicketCreate() {
       if (res.data.status === "dispatched") {
         setTask("");
         setFlags([]);
+        onDispatched(res.data.stdout);
       }
     }
   }
 
   return (
     <div className="max-w-2xl mx-auto">
-      {/* Warning banner */}
-      <div className="bg-accent-yellow/10 border border-accent-yellow/30 rounded-lg px-4 py-3 mb-6 text-sm text-accent-yellow">
-        Controls require the backend to be running with controls enabled. The
-        API will return 403 if controls are not enabled in
-        .dispatch-factory.toml.
-      </div>
-
       <form onSubmit={handleSubmit} className="space-y-5">
         {/* Task */}
         <div>

@@ -196,6 +196,12 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
                     </div>
                   </div>
 
+                  {session.task && (
+                    <p className="text-sm text-gray-400 mb-3">
+                      {session.task}
+                    </p>
+                  )}
+
                   <div className="flex items-center justify-between">
                     <StageProgress artifactTypes={session.artifact_types} />
                     <span className="text-[10px] mono text-gray-600">

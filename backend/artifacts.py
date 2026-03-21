@@ -51,6 +51,25 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
+def _extract_task(artifacts_dir: Path, session_id: str) -> str:
+    """Extract task description from the .prompt file."""
+    prompt_file = artifacts_dir / f"{session_id}.prompt"
+    text = _read_text(prompt_file)
+    if not text:
+        return ""
+    # Task is between "## Task" and "## Project"
+    start = text.find("## Task")
+    if start == -1:
+        return ""
+    start = text.index("\n", start) + 1
+    end = text.find("## Project", start)
+    if end == -1:
+        end = text.find("##", start)
+    task = text[start:end].strip() if end != -1 else text[start:].strip()
+    # Cap at 200 chars
+    return task[:200]
+
+
 def _detect_session_state(artifacts: dict[str, object]) -> str:
     """Derive a high-level state from whichever artifacts exist."""
     if "error" in artifacts:
@@ -98,6 +117,7 @@ def list_sessions() -> list[dict]:
                 "id": session_id,
                 "project": project,
                 "type": session_type,
+                "task": _extract_task(artifacts_dir, session_id),
                 "artifacts": {},
                 "has_log": False,
             }
