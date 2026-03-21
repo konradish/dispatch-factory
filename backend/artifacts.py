@@ -171,11 +171,21 @@ def get_session(session_id: str) -> dict | None:
     }
 
 
+SHELL_COMMANDS = frozenset({"zsh", "bash", "sh", "fish"})
+
+
 def get_active_sessions() -> list[dict]:
-    """Parse tmux to find active worker/deploy sessions."""
+    """Parse tmux to find dispatch sessions where a worker process is still running.
+
+    Sessions that dropped back to a bare shell (zsh/bash) are considered dead
+    and excluded. Only sessions running claude/cy/node/python/etc are reported.
+    """
     try:
         result = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            [
+                "tmux", "list-panes", "-a",
+                "-F", "#{session_name}\t#{pane_current_command}",
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -188,9 +198,12 @@ def get_active_sessions() -> list[dict]:
 
     sessions = []
     for line in result.stdout.strip().splitlines():
-        name = line.strip()
-        if SESSION_RE.match(name):
-            sessions.append({"id": name, "active": True})
+        parts = line.strip().split("\t", 1)
+        if len(parts) != 2:
+            continue
+        name, cmd = parts
+        if SESSION_RE.match(name) and cmd not in SHELL_COMMANDS:
+            sessions.append({"id": name, "active": True, "command": cmd})
     return sessions
 
 
