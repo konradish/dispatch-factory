@@ -1,0 +1,29 @@
+# Copy to .dispatch-factory.toml and customize
+# All paths/ports are local-only by default
+
+[dispatch]
+# Where dispatch writes its artifacts (session logs, JSON, etc.)
+artifacts_dir = "~/.local/share/dispatch"
+
+# Path to dispatch CLI
+dispatch_bin = "~/.local/bin/dispatch"
+
+[server]
+# Bind to localhost only. Set to 0.0.0.0 ONLY if behind auth.
+host = "127.0.0.1"
+port = 8420
+
+# Enable human controls (hold/kill/redispatch). Default: read-only.
+enable_controls = false
+
+[terminal]
+# Enable ttyd terminal embedding. Requires ttyd installed.
+enabled = false
+
+# Read-only by default. Set to true to allow typing into worker sessions.
+# WARNING: This lets the browser send keystrokes to running workers.
+allow_input = false
+
+# Port range for ttyd instances (one per active worker)
+port_start = 7681
+port_end = 7699

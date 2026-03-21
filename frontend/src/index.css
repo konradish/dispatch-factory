@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-base: #0a0e17;
+  --color-bg-surface: #111827;
+  --color-bg-surface-alt: #1a2332;
+  --color-accent-green: #10b981;
+  --color-accent-yellow: #f59e0b;
+  --color-accent-red: #ef4444;
+  --color-accent-blue: #3b82f6;
+  --color-accent-purple: #8b5cf6;
+  --color-accent-cyan: #06b6d4;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  background-color: #0a0e17;
+  color: #e5e7eb;
+  margin: 0;
+  min-height: 100vh;
+}
+
+.mono {
+  font-family: "JetBrains Mono", monospace;
+}
