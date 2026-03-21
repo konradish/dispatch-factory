@@ -129,6 +129,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:8420",
         "http://127.0.0.1:8420",
+        "http://factory.localhost",
     ],
     allow_methods=["*"],
     allow_headers=["*"],

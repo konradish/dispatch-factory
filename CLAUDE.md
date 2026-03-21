@@ -26,6 +26,10 @@ make lint       # Lint both
 make test       # Test both
 ```
 
+Access at: **http://factory.localhost** (requires Traefik from `/mnt/c/projects/infra`)
+
+Traefik routes `factory.localhost` → Vite dev server (port 5173), which proxies `/api` to FastAPI (port 8420).
+
 ## Config
 
 Copy `.dispatch-factory.example.toml` to `.dispatch-factory.toml` and adjust paths.

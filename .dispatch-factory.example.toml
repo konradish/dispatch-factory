@@ -13,6 +13,11 @@ dispatch_bin = "~/.local/bin/dispatch"
 host = "127.0.0.1"
 port = 8420
 
+# Local URL via Traefik (*.localhost convention)
+# Requires Traefik running with dynamic.yaml route: factory.localhost -> host.docker.internal:5173
+# Access at: http://factory.localhost
+local_url = "http://factory.localhost"
+
 # Enable human controls (hold/kill/redispatch). Default: read-only.
 enable_controls = false
 
