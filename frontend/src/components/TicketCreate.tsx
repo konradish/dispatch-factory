@@ -3,14 +3,9 @@ import { createTicket } from "@/lib/api";
 import type { TicketResponse } from "@/types";
 // TicketResponse has { status, stdout, stderr } from the real backend
 
-const PROJECTS = [
-  "recipebrain",
-  "schoolbrain",
-  "movies",
-  "lawpass",
-  "electricapp",
-  "voice-bridge",
-];
+// Project list — users will customize this for their setup.
+// TODO: fetch from backend /api/projects endpoint
+const PROJECTS = ["my-project"];
 
 const FLAGS = [
   { value: "--no-merge", label: "No merge (draft PR only)" },

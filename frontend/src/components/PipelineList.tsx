@@ -19,14 +19,13 @@ const STATE_LABELS: Record<string, { label: string; color: string }> = {
   error: { label: "Error", color: "bg-accent-red" },
 };
 
-const PROJECT_COLORS: Record<string, string> = {
-  recipebrain: "#10b981",
-  schoolbrain: "#3b82f6",
-  movies: "#8b5cf6",
-  lawpass: "#f59e0b",
-  electricapp: "#06b6d4",
-  "voice-bridge": "#ef4444",
-};
+// Generate a consistent color from project name
+const PALETTE = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#06b6d4", "#ef4444", "#ec4899", "#f97316"];
+function projectColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return PALETTE[Math.abs(hash) % PALETTE.length];
+}
 
 const PIPELINE_STAGES = [
   "planner",
@@ -167,7 +166,7 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
                         className="h-3 w-3 rounded-full shrink-0"
                         style={{
                           backgroundColor:
-                            PROJECT_COLORS[session.project] ?? "#6b7280",
+                            projectColor(session.project),
                         }}
                       />
                       <span className="mono text-sm font-medium text-gray-200">
@@ -264,7 +263,7 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
                           className="h-2 w-2 rounded-full"
                           style={{
                             backgroundColor:
-                              PROJECT_COLORS[session.project] ?? "#6b7280",
+                              projectColor(session.project),
                           }}
                         />
                       </td>
