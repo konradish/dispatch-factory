@@ -241,15 +241,15 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
                   <li key={i}>• {q}</li>
                 ))}
               </ul>
-              <div className="flex gap-2">
-                <input
-                  type="text"
+              <div className="flex gap-2 items-end">
+                <textarea
                   value={refinementInput}
                   onChange={(e) => setRefinementInput(e.target.value)}
-                  placeholder="Answer the questions to refine the ticket..."
-                  className="flex-1 bg-bg-surface border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-yellow"
+                  placeholder="Answer the questions to refine the ticket... (Enter to submit, Shift+Enter for new line)"
+                  rows={2}
+                  className="flex-1 bg-bg-surface border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-yellow resize-none"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && refinementInput.trim()) {
+                    if (e.key === "Enter" && !e.shiftKey && refinementInput.trim()) {
                       e.preventDefault();
                       handleRefine();
                     }
@@ -258,7 +258,7 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
                 <button
                   onClick={handleRefine}
                   disabled={thinking || !refinementInput.trim()}
-                  className="px-4 py-2 text-xs font-semibold rounded bg-accent-yellow/20 text-accent-yellow border border-accent-yellow/30 hover:bg-accent-yellow/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-xs font-semibold rounded bg-accent-yellow/20 text-accent-yellow border border-accent-yellow/30 hover:bg-accent-yellow/30 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                 >
                   {thinking ? "Refining..." : "Refine"}
                 </button>
