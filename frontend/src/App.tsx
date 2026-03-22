@@ -4,12 +4,13 @@ import TicketCreate from "@/components/TicketCreate";
 import BacklogView from "@/components/BacklogView";
 import HistoryView from "@/components/HistoryView";
 import FactoryLog from "@/components/FactoryLog";
+import PipelineDefinition from "@/components/PipelineDefinition";
 import TerminalPanel from "@/components/TerminalPanel";
 import SessionDetail from "@/components/SessionDetail";
 import HeartbeatIndicator from "@/components/HeartbeatIndicator";
 import type { TerminalTab } from "@/components/TerminalPanel";
 import { attachTerminal } from "@/lib/api";
-type Tab = "pipeline" | "create" | "backlog" | "history" | "log";
+type Tab = "pipeline" | "create" | "backlog" | "history" | "log" | "pipeline-def";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
@@ -94,7 +95,7 @@ export default function App() {
                   : "text-gray-500 hover:text-gray-300"
               }`}
             >
-              Pipeline
+              Active
             </button>
             <button
               onClick={() => setActiveTab("create")}
@@ -136,6 +137,16 @@ export default function App() {
             >
               Factory Log
             </button>
+            <button
+              onClick={() => setActiveTab("pipeline-def")}
+              className={`px-4 py-1.5 text-sm rounded transition-colors ${
+                activeTab === "pipeline-def"
+                  ? "bg-bg-surface-alt text-gray-200"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Pipeline Def
+            </button>
             <div className="w-px h-5 bg-gray-800 mx-2" />
             <button
               onClick={toggleTerminal}
@@ -165,6 +176,7 @@ export default function App() {
         )}
         {activeTab === "history" && <HistoryView onSelectSession={setSelectedSession} />}
         {activeTab === "log" && <FactoryLog onSelectSession={setSelectedSession} />}
+        {activeTab === "pipeline-def" && <PipelineDefinition />}
       </main>
 
       {/* Keyboard hints */}

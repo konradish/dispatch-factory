@@ -18,6 +18,7 @@ from pydantic import BaseModel
 import artifacts
 import backlog
 import heartbeat
+import pipeline
 import terminal
 from config import settings
 
@@ -444,6 +445,30 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline definition
+# ---------------------------------------------------------------------------
+
+@app.get("/api/pipeline")
+async def get_pipeline() -> dict:
+    """Return the full pipeline definition."""
+    return pipeline.get_pipeline()
+
+
+@app.get("/api/pipeline/summary")
+async def get_pipeline_summary() -> dict:
+    """Return a compact pipeline summary for dashboard display."""
+    return pipeline.get_pipeline_summary()
+
+
+@app.get("/api/pipeline/stages/{stage_id}")
+async def get_pipeline_stage(stage_id: str) -> dict:
+    stage = pipeline.get_stage(stage_id)
+    if stage is None:
+        raise HTTPException(status_code=404, detail="Stage not found")
+    return stage
 
 
 # ---------------------------------------------------------------------------

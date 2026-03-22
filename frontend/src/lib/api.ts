@@ -9,6 +9,8 @@ import type {
   LogEvent,
   BacklogTicket,
   HeartbeatState,
+  PipelineSummary,
+  PipelineStageDetail,
 } from "@/types";
 
 interface ApiResult<T> {
@@ -162,4 +164,14 @@ export function toggleAutoDispatch(
     `/api/heartbeat/auto-dispatch?enabled=${enabled}&max_concurrent=${maxConcurrent}`,
     { method: "POST" }
   );
+}
+
+export function fetchPipelineSummary(): Promise<ApiResult<PipelineSummary>> {
+  return request<PipelineSummary>("/api/pipeline/summary");
+}
+
+export function fetchPipelineStage(
+  id: string
+): Promise<ApiResult<PipelineStageDetail>> {
+  return request<PipelineStageDetail>(`/api/pipeline/stages/${id}`);
 }

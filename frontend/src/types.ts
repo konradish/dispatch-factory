@@ -105,6 +105,36 @@ export interface HeartbeatState {
   uptime_seconds: number;
 }
 
+// Matches /api/pipeline/summary response
+export interface PipelineStageSummary {
+  id: string;
+  name: string;
+  phase: number | string;
+  description: string;
+  enabled: boolean | string;
+  engine: string;
+  model: string;
+  timeout: number | null;
+  healer: { enabled: boolean; actions: string[] } | null;
+  outputs: string[];
+}
+
+export interface PipelineSummary {
+  version: string;
+  global: {
+    session_timeout_minutes: number;
+    deploy_window: [number, number];
+    stage_timeout_seconds: number;
+  };
+  stages: PipelineStageSummary[];
+  dispatch_bin: string;
+}
+
+// Matches /api/pipeline/stages/:id response
+export interface PipelineStageDetail extends PipelineStageSummary {
+  [key: string]: unknown;
+}
+
 // Matches /api/log response
 export interface LogEvent {
   timestamp: number;
