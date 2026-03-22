@@ -366,6 +366,10 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
                       onDispatch={handleDispatch}
                       onRetry={(id) => handleStatusChange(id, "ready")}
                       onSelectSession={onSelectSession}
+                      onUpdateTicket={async (id, updates) => {
+                        await updateBacklogTicket(id, updates);
+                        load();
+                      }}
                     />
                   ))
                 )}
@@ -410,6 +414,7 @@ interface KanbanCardProps {
   onDispatch: (id: string) => void;
   onRetry: (id: string) => void;
   onSelectSession: (sessionId: string) => void;
+  onUpdateTicket: (id: string, updates: Record<string, unknown>) => void;
 }
 
 function KanbanCard({
@@ -421,7 +426,10 @@ function KanbanCard({
   onDispatch,
   onRetry,
   onSelectSession,
+  onUpdateTicket,
 }: KanbanCardProps) {
+  const [editing, setEditing] = useState(false);
+  const [editTask, setEditTask] = useState(ticket.task);
   const priorityColor = PRIORITY_COLORS[ticket.priority] ?? "text-gray-500";
   const cardBorder = columnId === "done" ? statusBorderColor(ticket.status) : "border-l-transparent";
   const bgClass = PRIORITY_BG[ticket.priority] ?? "bg-bg-surface border-gray-700";
@@ -476,6 +484,53 @@ function KanbanCard({
           </span>
         )}
       </div>
+
+      {/* Inline edit for needs_input / intake tickets */}
+      {columnId === "intake" && !editing && (
+        <button
+          onClick={() => { setEditing(true); setEditTask(ticket.task); }}
+          className="mt-2 w-full text-left px-2 py-1.5 rounded text-[10px] bg-accent-yellow/10 text-accent-yellow border border-accent-yellow/20 hover:bg-accent-yellow/15 transition-colors"
+        >
+          Edit &amp; move to Ready
+        </button>
+      )}
+      {columnId === "intake" && editing && (
+        <div className="mt-2 space-y-1.5">
+          <textarea
+            value={editTask}
+            onChange={(e) => setEditTask(e.target.value)}
+            rows={3}
+            className="w-full bg-bg-base border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-accent-yellow resize-none"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && editTask.trim()) {
+                e.preventDefault();
+                onUpdateTicket(ticket.id, { task: editTask.trim(), status: "ready" });
+                setEditing(false);
+              }
+              if (e.key === "Escape") setEditing(false);
+            }}
+          />
+          <div className="flex gap-1.5">
+            <button
+              onClick={() => {
+                onUpdateTicket(ticket.id, { task: editTask.trim(), status: "ready" });
+                setEditing(false);
+              }}
+              disabled={!editTask.trim()}
+              className="px-2 py-0.5 rounded text-[10px] font-medium bg-accent-green/15 text-accent-green border border-accent-green/30 hover:bg-accent-green/25 disabled:opacity-40"
+            >
+              Save &amp; Ready
+            </button>
+            <button
+              onClick={() => setEditing(false)}
+              className="px-2 py-0.5 rounded text-[10px] text-gray-500 hover:text-gray-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Session ID (In Flight) */}
       {columnId === "inflight" && ticket.session_id && (
