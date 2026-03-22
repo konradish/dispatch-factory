@@ -228,11 +228,31 @@ function MonitorSection({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+function renderSimpleMarkdown(text: string): string {
+  return text
+    // Headers
+    .replace(/^### (.+)$/gm, '<h4 class="text-sm font-semibold text-gray-200 mt-3 mb-1">$1</h4>')
+    .replace(/^## (.+)$/gm, '<h3 class="text-sm font-bold text-gray-100 mt-4 mb-1">$1</h3>')
+    .replace(/^# (.+)$/gm, '<h2 class="text-base font-bold text-white mt-4 mb-2">$1</h2>')
+    // Bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-gray-200 font-semibold">$1</strong>')
+    // Links
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" class="text-accent-cyan hover:underline">$1</a>')
+    // Bare URLs
+    .replace(/(^|[^"'])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener" class="text-accent-cyan hover:underline">$2</a>')
+    // List items
+    .replace(/^  - (.+)$/gm, '<div class="pl-4 text-gray-400">• $1</div>')
+    .replace(/^- (.+)$/gm, '<div class="text-gray-400">• $1</div>')
+    // Line breaks
+    .replace(/\n/g, '<br/>');
+}
+
 function ResultSection({ data }: { data: string }) {
   return (
-    <pre className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed font-[inherit] overflow-x-auto">
-      {data}
-    </pre>
+    <div
+      className="text-xs text-gray-300 leading-relaxed overflow-x-auto space-y-0.5"
+      dangerouslySetInnerHTML={{ __html: renderSimpleMarkdown(data) }}
+    />
   );
 }
 
