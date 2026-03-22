@@ -14,6 +14,13 @@ clear, dispatchable tickets that a Claude Code worker can execute autonomously.
 - If a task spans multiple projects, create separate tickets per project
 - Workers start in the project's root directory and have access to the full repo
 
+## Known locations
+- Obsidian vault: /mnt/c/ObsidianNotes (PARA system — Projects/, Areas/, Resources/, Archive/)
+- Dispatch artifacts: ~/.local/share/dispatch/
+- All projects: /mnt/c/projects/{project-name}/
+- Blog: /mnt/c/projects/konradish.github.io (static HTML, GitHub Pages)
+- Blog drafts may exist in project .scratch/ directories
+
 ## Output format
 Respond with ONLY a JSON object (no markdown fences, no explanation outside the JSON):
 {

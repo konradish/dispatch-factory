@@ -457,6 +457,23 @@ class IntakeRequest(BaseModel):
     context: str = ""
 
 
+@app.get("/api/intake/prompt")
+async def get_intake_prompt() -> dict[str, str]:
+    """Read the current intake system prompt."""
+    return {"prompt": intake.PROMPT_FILE.read_text() if intake.PROMPT_FILE.is_file() else intake._DEFAULT_PROMPT}
+
+
+@app.put("/api/intake/prompt")
+async def set_intake_prompt(body: dict) -> dict[str, str]:
+    """Update the intake system prompt."""
+    _require_controls()
+    text = body.get("prompt", "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    intake.PROMPT_FILE.write_text(text)
+    return {"status": "saved"}
+
+
 @app.post("/api/intake")
 async def intake_structure(req: IntakeRequest) -> dict:
     """Send rough idea to LLM, get back structured ticket proposals."""

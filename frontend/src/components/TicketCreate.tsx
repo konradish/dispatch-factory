@@ -395,12 +395,70 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
           {error}
         </div>
       )}
+      {/* System prompt editor (collapsible) */}
+      <SystemPromptEditor />
+
       {/* Project datalist for autocomplete */}
       <datalist id="project-suggestions">
         {projects.map((p) => (
           <option key={p} value={p} />
         ))}
       </datalist>
+    </div>
+  );
+}
+
+function SystemPromptEditor() {
+  const [open, setOpen] = useState(false);
+  const [prompt, setPrompt] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  function load() {
+    if (loaded) return;
+    fetch("/api/intake/prompt")
+      .then((r) => r.json())
+      .then((d) => { setPrompt(d.prompt); setLoaded(true); })
+      .catch(() => {});
+  }
+
+  async function save() {
+    setSaving(true);
+    await fetch("/api/intake/prompt", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    });
+    setSaving(false);
+  }
+
+  return (
+    <div className="mt-6 border-t border-gray-800 pt-4">
+      <button
+        onClick={() => { setOpen(!open); load(); }}
+        className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1"
+      >
+        <span className="mono">{open ? "▾" : "▸"}</span>
+        System Prompt
+        <span className="text-gray-700 ml-1">(backend/intake-prompt.md)</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={16}
+            className="w-full bg-bg-surface border border-gray-700 rounded-lg px-4 py-3 text-xs text-gray-300 mono focus:outline-none focus:border-accent-purple resize-y leading-relaxed"
+          />
+          <button
+            onClick={save}
+            disabled={saving}
+            className="px-4 py-1.5 text-xs font-semibold rounded bg-accent-purple/20 text-accent-purple border border-accent-purple/30 hover:bg-accent-purple/30 disabled:opacity-40"
+          >
+            {saving ? "Saving..." : "Save Prompt"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
