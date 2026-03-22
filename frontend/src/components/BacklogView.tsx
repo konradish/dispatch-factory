@@ -151,9 +151,10 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
     return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
   });
 
-  function formatTime(iso: string | null): string {
-    if (!iso) return "--";
-    const d = new Date(iso);
+  function formatTime(ts: number | string | null): string {
+    if (!ts) return "--";
+    // Handle unix timestamp (number) or ISO string
+    const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
     return d.toLocaleString(undefined, {
       month: "short",
       day: "numeric",

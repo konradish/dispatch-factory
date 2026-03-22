@@ -19,7 +19,7 @@ import artifacts
 import backlog
 import heartbeat
 import intake
-import operator as factory_operator
+import factory_operator
 import pipeline
 import terminal
 from config import settings

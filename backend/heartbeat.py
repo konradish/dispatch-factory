@@ -77,8 +77,8 @@ def _beat() -> list[str]:
     # 3. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
-            import operator as op
-            result = op.run_operator()
+            import factory_operator
+            result = factory_operator.run_operator()
             if result.get("actions"):
                 actions.append(f"operator[{result.get('lens', '?')}]: {len(result['actions'])} actions")
             elif result.get("assessment"):
