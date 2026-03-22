@@ -228,17 +228,34 @@ def get_active_sessions() -> list[dict]:
 
 
 def get_known_projects() -> list[str]:
-    """Scan artifacts to discover all known project names."""
-    artifacts_dir = _artifacts_path()
-    if not artifacts_dir.is_dir():
-        return []
+    """Discover projects from artifacts + dispatch --projects."""
     projects: set[str] = set()
-    for entry in artifacts_dir.iterdir():
-        m = SESSION_RE.match(entry.name)
-        if m:
-            parts = SESSION_PARTS_RE.match(m.group(1))
-            if parts:
-                projects.add(parts.group(1))
+
+    # From artifacts
+    artifacts_dir = _artifacts_path()
+    if artifacts_dir.is_dir():
+        for entry in artifacts_dir.iterdir():
+            m = SESSION_RE.match(entry.name)
+            if m:
+                parts = SESSION_PARTS_RE.match(m.group(1))
+                if parts:
+                    projects.add(parts.group(1))
+
+    # From dispatch CLI
+    try:
+        result = subprocess.run(
+            [settings.dispatch_bin, "--projects"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                # dispatch --projects outputs project names with leading spaces
+                if line and not line.startswith(("path", "test", "aliases", "local_url", "smoke", "deploy", "known", "stage")):
+                    projects.add(line)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
     return sorted(projects)
 
 
