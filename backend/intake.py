@@ -1,7 +1,9 @@
 """Intake chat — LLM-assisted ticket structuring.
 
 Takes a rough idea from the user, asks the LLM to structure it into
-a well-specified ticket, returns the proposal for approval.
+one or more well-specified tickets, returns proposals for approval.
+
+System prompt is loaded from intake-prompt.md (editable by the user).
 """
 
 from __future__ import annotations
@@ -13,58 +15,82 @@ from pathlib import Path
 
 from config import settings
 
-# Projects list for context
-def _get_projects() -> list[str]:
+PROMPT_FILE = Path(__file__).parent / "intake-prompt.md"
+
+
+def _get_project_details() -> str:
+    """Get detailed project info from dispatch --projects."""
     try:
         result = subprocess.run(
             [settings.dispatch_bin, "--projects"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode == 0:
-            projects = []
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line and not line.startswith(("path", "test", "aliases", "local_url", "smoke", "deploy", "known", "stage")):
-                    projects.append(line)
-            return projects
+            return result.stdout
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-    return []
+    return "No project details available."
 
 
-def structure_ticket(raw_input: str, context: str = "") -> dict:
-    """Send rough idea to LLM, get back a structured ticket proposal.
+def _load_system_prompt() -> str:
+    """Load system prompt from file, or use built-in default."""
+    if PROMPT_FILE.is_file():
+        return PROMPT_FILE.read_text()
+    return _DEFAULT_PROMPT
 
-    Returns dict with: task, project, priority, flags, reasoning
-    """
-    projects = _get_projects()
-    projects_str = ", ".join(projects) if projects else "unknown"
 
-    prompt = f"""You are a factory intake assistant. The user has a rough idea for work they want done.
-Structure it into a clear, dispatchable ticket.
+_DEFAULT_PROMPT = """You are a factory intake assistant for an autonomous SDLC pipeline.
+The user describes work they want done. Your job is to structure it into
+clear, dispatchable tickets that a Claude Code worker can execute autonomously.
 
-Available projects: {projects_str}
-
-User's input: "{raw_input}"
-{f"Additional context: {context}" if context else ""}
-
-Respond with ONLY a JSON object (no markdown, no explanation):
-{{
-  "task": "Clear, actionable task description (1-2 sentences, under 200 chars). Be specific about what to build/fix/change.",
-  "project": "one of the available project names, or 'unknown' if unclear",
-  "priority": "low|normal|high|urgent",
-  "flags": [],
-  "reasoning": "Brief explanation of why you structured it this way and any assumptions you made",
-  "questions": ["List any clarifying questions if the input is ambiguous. Empty list if clear enough."]
-}}
-
-Rules:
-- If the project is obvious from context, pick it
+## Rules
+- Each ticket must be self-contained — a worker reading ONLY the task should know what to do
+- If the work naturally splits into multiple independent tasks, create multiple tickets
+- If one ticket depends on another, note it in the reasoning
 - Default priority to "normal" unless urgency is indicated
-- flags can include: --no-merge, --plan, --no-plan
+- flags can include: --no-merge (draft PR only), --plan (force planner), --no-plan (skip planner)
 - Use --plan for complex multi-file tasks, --no-plan for simple fixes
-- If the input is too vague to dispatch, put your questions in the questions field
-- task should be self-contained — a worker reading only the task should know what to do"""
+- If the input is too vague to dispatch, ask clarifying questions
+- Pick the most appropriate project for each ticket
+- If a task spans multiple projects, create separate tickets per project
+
+## Output format
+Respond with ONLY a JSON object (no markdown fences, no explanation outside the JSON):
+{
+  "tickets": [
+    {
+      "task": "Clear, actionable description (1-3 sentences, under 300 chars)",
+      "project": "project-name",
+      "priority": "low|normal|high|urgent",
+      "flags": [],
+      "related_repos": []
+    }
+  ],
+  "reasoning": "Brief explanation of how you decomposed the work and any assumptions",
+  "questions": ["Clarifying questions if input is ambiguous. Empty list if clear enough."]
+}
+"""
+
+
+def structure_tickets(raw_input: str, context: str = "") -> dict:
+    """Send rough idea to LLM, get back structured ticket proposals.
+
+    Returns dict with: tickets (list), reasoning, questions
+    """
+    project_details = _get_project_details()
+    system_prompt = _load_system_prompt()
+
+    prompt = f"""{system_prompt}
+
+## Available projects
+{project_details}
+
+## User's request
+"{raw_input}"
+{f'''
+## Conversation context
+{context}''' if context else ""}
+"""
 
     # Use claude_reason pattern — Agent SDK subprocess
     env = dict(__import__("os").environ)
@@ -108,76 +134,82 @@ asyncio.run(main())
 
     out_path = tempfile.mktemp(suffix=".json")
 
+    fallback = {
+        "tickets": [{"task": raw_input, "project": "unknown", "priority": "normal", "flags": [], "related_repos": []}],
+        "reasoning": "",
+        "questions": [],
+    }
+
     try:
         r = subprocess.run(
             ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "1"],
-            capture_output=True, text=True, timeout=60, env=env,
+            capture_output=True, text=True, timeout=90, env=env,
         )
 
         if r.returncode != 0:
-            return {
-                "task": raw_input,
-                "project": "unknown",
-                "priority": "normal",
-                "flags": [],
-                "reasoning": f"LLM structuring failed (exit {r.returncode}). Using raw input as task.",
-                "questions": [],
-                "error": r.stderr[-300:] if r.stderr else "unknown error",
-            }
+            fallback["reasoning"] = f"LLM failed (exit {r.returncode}). Using raw input."
+            fallback["error"] = r.stderr[-300:] if r.stderr else "unknown"
+            return fallback
 
         raw = Path(out_path).read_text() if Path(out_path).exists() else ""
         if not raw:
-            return {
-                "task": raw_input,
-                "project": "unknown",
-                "priority": "normal",
-                "flags": [],
-                "reasoning": "LLM returned empty response. Using raw input as task.",
-                "questions": [],
-            }
+            fallback["reasoning"] = "LLM returned empty response."
+            return fallback
 
         result_data = json.loads(raw)
-        response_text = result_data.get("response", "")
+        response_text = result_data.get("response", "").strip()
 
-        # Parse the JSON from the response (may have markdown wrapping)
-        response_text = response_text.strip()
+        # Strip markdown code fences if present
         if response_text.startswith("```"):
             lines = response_text.split("\n")
-            response_text = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+            response_text = "\n".join(lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:])
 
-        ticket = json.loads(response_text)
+        parsed = json.loads(response_text)
 
-        # Validate required fields
+        # Normalize — support both old single-ticket and new multi-ticket format
+        if "tickets" in parsed:
+            tickets = parsed["tickets"]
+        elif "task" in parsed:
+            tickets = [parsed]
+        else:
+            tickets = []
+
+        # Validate each ticket
+        clean_tickets = []
+        for t in tickets:
+            clean_tickets.append({
+                "task": str(t.get("task", ""))[:500],
+                "project": str(t.get("project", "unknown")),
+                "priority": str(t.get("priority", "normal")),
+                "flags": list(t.get("flags", [])),
+                "related_repos": list(t.get("related_repos", [])),
+            })
+
         return {
-            "task": str(ticket.get("task", raw_input))[:500],
-            "project": str(ticket.get("project", "unknown")),
-            "priority": str(ticket.get("priority", "normal")),
-            "flags": list(ticket.get("flags", [])),
-            "reasoning": str(ticket.get("reasoning", "")),
-            "questions": list(ticket.get("questions", [])),
+            "tickets": clean_tickets or fallback["tickets"],
+            "reasoning": str(parsed.get("reasoning", "")),
+            "questions": list(parsed.get("questions", [])),
         }
 
     except json.JSONDecodeError:
-        return {
-            "task": raw_input,
-            "project": "unknown",
-            "priority": "normal",
-            "flags": [],
-            "reasoning": "Could not parse LLM response as JSON. Using raw input.",
-            "questions": [],
-        }
+        fallback["reasoning"] = "Could not parse LLM response as JSON."
+        return fallback
     except subprocess.TimeoutExpired:
-        return {
-            "task": raw_input,
-            "project": "unknown",
-            "priority": "normal",
-            "flags": [],
-            "reasoning": "LLM timed out. Using raw input as task.",
-            "questions": [],
-        }
+        fallback["reasoning"] = "LLM timed out."
+        return fallback
     finally:
         for p in [script_path, prompt_path, out_path]:
             try:
                 Path(p).unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+# Keep backward compat for single-ticket callers
+def structure_ticket(raw_input: str, context: str = "") -> dict:
+    """Legacy single-ticket interface."""
+    result = structure_tickets(raw_input, context)
+    ticket = result["tickets"][0] if result["tickets"] else {
+        "task": raw_input, "project": "unknown", "priority": "normal", "flags": [],
+    }
+    return {**ticket, "reasoning": result["reasoning"], "questions": result["questions"]}

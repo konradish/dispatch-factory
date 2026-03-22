@@ -459,12 +459,12 @@ class IntakeRequest(BaseModel):
 
 @app.post("/api/intake")
 async def intake_structure(req: IntakeRequest) -> dict:
-    """Send rough idea to LLM, get back a structured ticket proposal."""
+    """Send rough idea to LLM, get back structured ticket proposals."""
     _require_controls()
     text = req.input.strip()
     if not text or len(text) > 1000:
         raise HTTPException(status_code=400, detail="Input must be 1-1000 characters")
-    return intake.structure_ticket(text, req.context)
+    return intake.structure_tickets(text, req.context)
 
 
 # ---------------------------------------------------------------------------

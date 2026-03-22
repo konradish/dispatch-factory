@@ -1,17 +1,29 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createTicket, createBacklogTicket } from "@/lib/api";
 
 const FLAGS = [
-  { value: "--no-merge", label: "No merge (draft PR only)" },
+  { value: "--no-merge", label: "No merge" },
   { value: "--plan", label: "Force planner" },
   { value: "--no-plan", label: "Skip planner" },
 ];
 
-interface IntakeProposal {
+const PRIORITY_COLORS: Record<string, string> = {
+  urgent: "text-accent-red",
+  high: "text-accent-yellow",
+  normal: "text-accent-blue",
+  low: "text-gray-500",
+};
+
+interface TicketProposal {
   task: string;
   project: string;
   priority: string;
   flags: string[];
+  related_repos: string[];
+}
+
+interface IntakeResponse {
+  tickets: TicketProposal[];
   reasoning: string;
   questions: string[];
 }
@@ -25,16 +37,21 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
   const [rawInput, setRawInput] = useState("");
   const [thinking, setThinking] = useState(false);
 
-  // Phase 2: structured proposal (editable)
-  const [proposal, setProposal] = useState<IntakeProposal | null>(null);
+  // Phase 2: structured proposals (editable)
+  const [intake, setIntake] = useState<IntakeResponse | null>(null);
 
   // Conversation history for multi-turn refinement
   const [conversationHistory, setConversationHistory] = useState<string[]>([]);
   const [refinementInput, setRefinementInput] = useState("");
 
-  // Phase 3: result
-  const [dispatching, setDispatching] = useState(false);
-  const [result, setResult] = useState<{ type: "dispatched" | "queued" | "error"; message: string } | null>(null);
+  // Project suggestions
+  const [projects, setProjects] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/projects").then((r) => r.json()).then(setProjects).catch(() => {});
+  }, []);
+
+  // Phase 3: results (per ticket)
+  const [ticketResults, setTicketResults] = useState<Record<number, { type: string; message: string }>>({});
   const [error, setError] = useState<string | null>(null);
 
   async function handleIntake(e: React.FormEvent, extraContext?: string) {
@@ -44,9 +61,8 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
 
     setThinking(true);
     setError(null);
-    setResult(null);
+    setTicketResults({});
 
-    // Build context from conversation history
     const contextParts = [...conversationHistory];
     if (extraContext) contextParts.push(extraContext);
     const context = contextParts.join("\n\n");
@@ -63,79 +79,77 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
         setThinking(false);
         return;
       }
-      const data = await res.json();
-      setProposal(data);
+      const data: IntakeResponse = await res.json();
+      setIntake(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to reach intake");
     }
     setThinking(false);
   }
 
-  function updateProposal(field: keyof IntakeProposal, value: unknown) {
-    if (!proposal) return;
-    setProposal({ ...proposal, [field]: value });
+  function updateTicket(idx: number, field: keyof TicketProposal, value: unknown) {
+    if (!intake) return;
+    const tickets = [...intake.tickets];
+    tickets[idx] = { ...tickets[idx], [field]: value };
+    setIntake({ ...intake, tickets });
   }
 
-  function toggleFlag(flag: string) {
-    if (!proposal) return;
-    const flags = proposal.flags.includes(flag)
-      ? proposal.flags.filter((f) => f !== flag)
-      : [...proposal.flags, flag];
-    updateProposal("flags", flags);
+  function toggleFlag(idx: number, flag: string) {
+    if (!intake) return;
+    const t = intake.tickets[idx];
+    const flags = t.flags.includes(flag)
+      ? t.flags.filter((f) => f !== flag)
+      : [...t.flags, flag];
+    updateTicket(idx, "flags", flags);
   }
 
-  async function handleDispatch() {
-    if (!proposal) return;
-    setDispatching(true);
+  function removeTicket(idx: number) {
+    if (!intake) return;
+    const tickets = intake.tickets.filter((_, i) => i !== idx);
+    setIntake({ ...intake, tickets });
+  }
+
+  async function handleDispatchOne(idx: number) {
+    if (!intake) return;
+    const t = intake.tickets[idx];
     setError(null);
 
-    const res = await createTicket({
-      task: proposal.task,
-      project: proposal.project,
-      flags: proposal.flags,
-    });
-
-    setDispatching(false);
+    const res = await createTicket({ task: t.task, project: t.project, flags: t.flags });
     if (res.error) {
-      setError(res.error);
+      setTicketResults((prev) => ({ ...prev, [idx]: { type: "error", message: res.error! } }));
     } else if (res.data?.status === "dispatched") {
-      setResult({ type: "dispatched", message: "Dispatched" });
+      setTicketResults((prev) => ({ ...prev, [idx]: { type: "dispatched", message: "Dispatched" } }));
       onDispatched(res.data.stdout);
-      setRawInput("");
-      setProposal(null);
     } else {
-      setError(res.data?.stderr || "Dispatch failed");
+      setTicketResults((prev) => ({ ...prev, [idx]: { type: "error", message: res.data?.stderr || "Failed" } }));
     }
   }
 
-  async function handleQueue() {
-    if (!proposal) return;
-    setDispatching(true);
+  async function handleQueueOne(idx: number) {
+    if (!intake) return;
+    const t = intake.tickets[idx];
     setError(null);
 
-    const res = await createBacklogTicket({
-      task: proposal.task,
-      project: proposal.project,
-      priority: proposal.priority,
-      flags: proposal.flags,
-    });
-
-    setDispatching(false);
+    const res = await createBacklogTicket({ task: t.task, project: t.project, priority: t.priority, flags: t.flags });
     if (res.error) {
-      setError(res.error);
+      setTicketResults((prev) => ({ ...prev, [idx]: { type: "error", message: res.error! } }));
     } else if (res.data) {
-      setResult({ type: "queued", message: `Queued as ${res.data.id}` });
-      setRawInput("");
-      setProposal(null);
+      setTicketResults((prev) => ({ ...prev, [idx]: { type: "queued", message: `Queued ${res.data!.id}` } }));
+    }
+  }
+
+  async function handleQueueAll() {
+    if (!intake) return;
+    for (let i = 0; i < intake.tickets.length; i++) {
+      if (!ticketResults[i]) await handleQueueOne(i);
     }
   }
 
   async function handleRefine() {
-    if (!refinementInput.trim() || !proposal) return;
+    if (!refinementInput.trim() || !intake) return;
 
-    // Add the AI's questions + user's answers to conversation history
-    const questionsBlock = proposal.questions.length > 0
-      ? `AI asked: ${proposal.questions.join("; ")}`
+    const questionsBlock = intake.questions.length > 0
+      ? `AI asked: ${intake.questions.join("; ")}`
       : "";
     const answerBlock = `User answered: ${refinementInput.trim()}`;
     const newHistory = [...conversationHistory];
@@ -144,14 +158,13 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
     setConversationHistory(newHistory);
     setRefinementInput("");
 
-    // Re-run intake with the accumulated context
     const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
     await handleIntake(fakeEvent, `${questionsBlock}\n${answerBlock}`);
   }
 
   function handleReset() {
-    setProposal(null);
-    setResult(null);
+    setIntake(null);
+    setTicketResults({});
     setError(null);
     setConversationHistory([]);
     setRefinementInput("");
@@ -160,7 +173,7 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
   return (
     <div className="max-w-2xl mx-auto">
       {/* Phase 1: Raw input */}
-      {!proposal && !result && (
+      {!intake && Object.keys(ticketResults).length === 0 && (
         <form onSubmit={handleIntake} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -200,11 +213,8 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
             <button
               type="button"
               onClick={() =>
-                setProposal({
-                  task: rawInput.trim(),
-                  project: "",
-                  priority: "normal",
-                  flags: [],
+                setIntake({
+                  tickets: [{ task: rawInput.trim(), project: "", priority: "normal", flags: [], related_repos: [] }],
                   reasoning: "",
                   questions: [],
                 })
@@ -217,27 +227,27 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
         </form>
       )}
 
-      {/* Phase 2: Structured proposal (editable) */}
-      {proposal && !result && (
+      {/* Phase 2: Structured proposals (editable) */}
+      {intake && (
         <div className="space-y-4">
           {/* Reasoning */}
-          {proposal.reasoning && (
+          {intake.reasoning && (
             <div className="bg-accent-purple/5 border border-accent-purple/20 rounded-lg px-4 py-3">
               <div className="text-[10px] uppercase text-accent-purple tracking-wider mb-1 font-semibold">
                 AI reasoning
               </div>
-              <p className="text-xs text-gray-400">{proposal.reasoning}</p>
+              <p className="text-xs text-gray-400">{intake.reasoning}</p>
             </div>
           )}
 
           {/* Questions + refinement */}
-          {proposal.questions.length > 0 && (
+          {intake.questions.length > 0 && (
             <div className="bg-accent-yellow/5 border border-accent-yellow/20 rounded-lg px-4 py-3 space-y-3">
               <div className="text-[10px] uppercase text-accent-yellow tracking-wider font-semibold">
                 Clarifying questions
               </div>
               <ul className="text-xs text-gray-400 space-y-1">
-                {proposal.questions.map((q, i) => (
+                {intake.questions.map((q, i) => (
                   <li key={i}>• {q}</li>
                 ))}
               </ul>
@@ -245,8 +255,8 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
                 <textarea
                   value={refinementInput}
                   onChange={(e) => setRefinementInput(e.target.value)}
-                  placeholder="Answer the questions to refine the ticket... (Enter to submit, Shift+Enter for new line)"
-                  rows={2}
+                  placeholder="Answer the questions... (Enter to submit, Shift+Enter for new line)"
+                  rows={4}
                   className="flex-1 bg-bg-surface border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-yellow resize-none"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey && refinementInput.trim()) {
@@ -266,96 +276,116 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
             </div>
           )}
 
-          {/* Editable fields */}
-          <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1">
-              Task
-            </label>
-            <textarea
-              value={proposal.task}
-              onChange={(e) => updateProposal("task", e.target.value.slice(0, 500))}
-              rows={3}
-              className="w-full bg-bg-surface border border-gray-700 rounded-lg px-4 py-3 text-sm text-gray-200 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue/50 resize-none"
-            />
+          {/* Ticket list */}
+          <div className="text-xs text-gray-500 uppercase tracking-wider font-semibold">
+            {intake.tickets.length} ticket{intake.tickets.length !== 1 ? "s" : ""}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">
-                Project
-              </label>
-              <input
-                type="text"
-                value={proposal.project}
-                onChange={(e) => updateProposal("project", e.target.value)}
-                className="w-full bg-bg-surface border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 mono focus:outline-none focus:border-accent-blue"
-                list="project-suggestions"
-              />
-              <ProjectDatalist />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1">
-                Priority
-              </label>
-              <select
-                value={proposal.priority}
-                onChange={(e) => updateProposal("priority", e.target.value)}
-                className="w-full bg-bg-surface border border-gray-700 rounded-lg px-4 py-2.5 text-sm text-gray-200 focus:outline-none focus:border-accent-blue"
+          {intake.tickets.map((t, idx) => {
+            const result = ticketResults[idx];
+            return (
+              <div
+                key={idx}
+                className={`bg-bg-surface border rounded-lg p-4 space-y-3 ${
+                  result?.type === "dispatched" ? "border-accent-green/30 opacity-60" :
+                  result?.type === "queued" ? "border-accent-cyan/30 opacity-60" :
+                  result?.type === "error" ? "border-accent-red/30" :
+                  "border-gray-700"
+                }`}
               >
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </div>
-          </div>
+                {result ? (
+                  <div className={`text-xs font-semibold ${
+                    result.type === "dispatched" ? "text-accent-green" :
+                    result.type === "queued" ? "text-accent-cyan" : "text-accent-red"
+                  }`}>
+                    {result.message}
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-start gap-3">
+                      <textarea
+                        value={t.task}
+                        onChange={(e) => updateTicket(idx, "task", e.target.value.slice(0, 500))}
+                        rows={2}
+                        className="flex-1 bg-bg-base border border-gray-800 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-accent-blue resize-none"
+                      />
+                      <button
+                        onClick={() => removeTicket(idx)}
+                        className="text-gray-600 hover:text-accent-red text-xs shrink-0 pt-2"
+                        title="Remove ticket"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="flex gap-3 items-center">
+                      <input
+                        type="text"
+                        value={t.project}
+                        onChange={(e) => updateTicket(idx, "project", e.target.value)}
+                        className="bg-bg-base border border-gray-800 rounded px-3 py-1.5 text-xs text-gray-200 mono focus:outline-none focus:border-accent-blue w-40"
+                        list="project-suggestions"
+                        placeholder="project"
+                      />
+                      <select
+                        value={t.priority}
+                        onChange={(e) => updateTicket(idx, "priority", e.target.value)}
+                        className={`bg-bg-base border border-gray-800 rounded px-3 py-1.5 text-xs focus:outline-none ${PRIORITY_COLORS[t.priority] || "text-gray-200"}`}
+                      >
+                        <option value="low">low</option>
+                        <option value="normal">normal</option>
+                        <option value="high">high</option>
+                        <option value="urgent">urgent</option>
+                      </select>
+                      {FLAGS.map((flag) => (
+                        <label key={flag.value} className="flex items-center gap-1 text-[10px] text-gray-600 hover:text-gray-400 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={t.flags.includes(flag.value)}
+                            onChange={() => toggleFlag(idx, flag.value)}
+                            className="h-3 w-3 rounded border-gray-700 bg-bg-base"
+                          />
+                          <span className="mono">{flag.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleDispatchOne(idx)}
+                        disabled={!t.task.trim() || !t.project}
+                        className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30 disabled:opacity-40"
+                      >
+                        Dispatch
+                      </button>
+                      <button
+                        onClick={() => handleQueueOne(idx)}
+                        disabled={!t.task.trim() || !t.project}
+                        className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/30 hover:bg-accent-cyan/30 disabled:opacity-40"
+                      >
+                        Queue
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
 
-          {/* Flags */}
-          <div>
-            <label className="block text-xs font-medium text-gray-400 mb-1">
-              Flags
-            </label>
-            <div className="flex gap-4">
-              {FLAGS.map((flag) => (
-                <label
-                  key={flag.value}
-                  className="flex items-center gap-2 cursor-pointer text-xs text-gray-500 hover:text-gray-300"
-                >
-                  <input
-                    type="checkbox"
-                    checked={proposal.flags.includes(flag.value)}
-                    onChange={() => toggleFlag(flag.value)}
-                    className="h-3.5 w-3.5 rounded border-gray-600 bg-bg-surface"
-                  />
-                  <span className="mono">{flag.value}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Actions */}
+          {/* Bulk actions + reset */}
           <div className="flex gap-3 pt-2">
             <button
-              onClick={handleDispatch}
-              disabled={dispatching || !proposal.task.trim() || !proposal.project}
-              className="flex-1 py-3 px-4 rounded-lg text-sm font-semibold transition-all bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleQueueAll}
+              disabled={intake.tickets.every((_, i) => ticketResults[i])}
+              className="flex-1 py-2.5 px-4 rounded-lg text-xs font-semibold transition-all bg-accent-cyan/10 text-accent-cyan border border-accent-cyan/20 hover:bg-accent-cyan/20 disabled:opacity-40"
             >
-              {dispatching ? "Dispatching..." : "Dispatch Now"}
+              Queue All
             </button>
             <button
-              onClick={handleQueue}
-              disabled={dispatching || !proposal.task.trim() || !proposal.project}
-              className="flex-1 py-3 px-4 rounded-lg text-sm font-semibold transition-all bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/30 hover:bg-accent-cyan/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={handleReset}
+              className="px-4 py-2.5 text-xs text-gray-600 hover:text-gray-400 border border-gray-800 rounded-lg"
             >
-              {dispatching ? "Queuing..." : "Add to Backlog"}
+              Start over
             </button>
           </div>
-          <button
-            onClick={handleReset}
-            className="w-full text-xs text-gray-600 hover:text-gray-400 py-1"
-          >
-            Start over
-          </button>
         </div>
       )}
 
@@ -365,57 +395,12 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
           {error}
         </div>
       )}
-
-      {/* Result */}
-      {result && (
-        <div
-          className={`mt-4 rounded-lg px-4 py-4 space-y-3 ${
-            result.type === "dispatched"
-              ? "bg-accent-green/10 border border-accent-green/30"
-              : result.type === "queued"
-                ? "bg-accent-cyan/10 border border-accent-cyan/30"
-                : "bg-accent-red/10 border border-accent-red/30"
-          }`}
-        >
-          <div
-            className={`text-sm ${
-              result.type === "dispatched"
-                ? "text-accent-green"
-                : result.type === "queued"
-                  ? "text-accent-cyan"
-                  : "text-accent-red"
-            }`}
-          >
-            {result.message}
-          </div>
-          <button
-            onClick={() => {
-              setResult(null);
-              setRawInput("");
-            }}
-            className="text-xs text-gray-500 hover:text-gray-300 underline"
-          >
-            Create another
-          </button>
-        </div>
-      )}
+      {/* Project datalist for autocomplete */}
+      <datalist id="project-suggestions">
+        {projects.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
     </div>
-  );
-}
-
-function ProjectDatalist() {
-  const [projects, setProjects] = useState<string[]>([]);
-  useState(() => {
-    fetch("/api/projects")
-      .then((r) => r.json())
-      .then(setProjects)
-      .catch(() => {});
-  });
-  return (
-    <datalist id="project-suggestions">
-      {projects.map((p) => (
-        <option key={p} value={p} />
-      ))}
-    </datalist>
   );
 }
