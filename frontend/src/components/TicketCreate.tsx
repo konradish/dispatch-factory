@@ -28,25 +28,34 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
   // Phase 2: structured proposal (editable)
   const [proposal, setProposal] = useState<IntakeProposal | null>(null);
 
+  // Conversation history for multi-turn refinement
+  const [conversationHistory, setConversationHistory] = useState<string[]>([]);
+  const [refinementInput, setRefinementInput] = useState("");
+
   // Phase 3: result
   const [dispatching, setDispatching] = useState(false);
   const [result, setResult] = useState<{ type: "dispatched" | "queued" | "error"; message: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleIntake(e: React.FormEvent) {
+  async function handleIntake(e: React.FormEvent, extraContext?: string) {
     e.preventDefault();
-    if (!rawInput.trim()) return;
+    const inputText = rawInput.trim();
+    if (!inputText) return;
 
     setThinking(true);
     setError(null);
-    setProposal(null);
     setResult(null);
+
+    // Build context from conversation history
+    const contextParts = [...conversationHistory];
+    if (extraContext) contextParts.push(extraContext);
+    const context = contextParts.join("\n\n");
 
     try {
       const res = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ input: rawInput.trim() }),
+        body: JSON.stringify({ input: inputText, context }),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -121,10 +130,31 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
     }
   }
 
+  async function handleRefine() {
+    if (!refinementInput.trim() || !proposal) return;
+
+    // Add the AI's questions + user's answers to conversation history
+    const questionsBlock = proposal.questions.length > 0
+      ? `AI asked: ${proposal.questions.join("; ")}`
+      : "";
+    const answerBlock = `User answered: ${refinementInput.trim()}`;
+    const newHistory = [...conversationHistory];
+    if (questionsBlock) newHistory.push(questionsBlock);
+    newHistory.push(answerBlock);
+    setConversationHistory(newHistory);
+    setRefinementInput("");
+
+    // Re-run intake with the accumulated context
+    const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+    await handleIntake(fakeEvent, `${questionsBlock}\n${answerBlock}`);
+  }
+
   function handleReset() {
     setProposal(null);
     setResult(null);
     setError(null);
+    setConversationHistory([]);
+    setRefinementInput("");
   }
 
   return (
@@ -200,10 +230,10 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
             </div>
           )}
 
-          {/* Questions */}
+          {/* Questions + refinement */}
           {proposal.questions.length > 0 && (
-            <div className="bg-accent-yellow/5 border border-accent-yellow/20 rounded-lg px-4 py-3">
-              <div className="text-[10px] uppercase text-accent-yellow tracking-wider mb-1 font-semibold">
+            <div className="bg-accent-yellow/5 border border-accent-yellow/20 rounded-lg px-4 py-3 space-y-3">
+              <div className="text-[10px] uppercase text-accent-yellow tracking-wider font-semibold">
                 Clarifying questions
               </div>
               <ul className="text-xs text-gray-400 space-y-1">
@@ -211,6 +241,28 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
                   <li key={i}>• {q}</li>
                 ))}
               </ul>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={refinementInput}
+                  onChange={(e) => setRefinementInput(e.target.value)}
+                  placeholder="Answer the questions to refine the ticket..."
+                  className="flex-1 bg-bg-surface border border-gray-700 rounded px-3 py-2 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-yellow"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && refinementInput.trim()) {
+                      e.preventDefault();
+                      handleRefine();
+                    }
+                  }}
+                />
+                <button
+                  onClick={handleRefine}
+                  disabled={thinking || !refinementInput.trim()}
+                  className="px-4 py-2 text-xs font-semibold rounded bg-accent-yellow/20 text-accent-yellow border border-accent-yellow/30 hover:bg-accent-yellow/30 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {thinking ? "Refining..." : "Refine"}
+                </button>
+              </div>
             </div>
           )}
 
