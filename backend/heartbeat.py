@@ -74,9 +74,17 @@ def _beat() -> list[str]:
     # 2. Check for stuck workers
     actions.extend(_check_stuck_workers())
 
-    # 3. Auto-dispatch if enabled and capacity available
+    # 3. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
-        actions.extend(_auto_dispatch())
+        try:
+            import operator as op
+            result = op.run_operator()
+            if result.get("actions"):
+                actions.append(f"operator[{result.get('lens', '?')}]: {len(result['actions'])} actions")
+            elif result.get("assessment"):
+                actions.append(f"operator[{result.get('lens', '?')}]: {result['assessment'][:80]}")
+        except Exception as e:
+            actions.append(f"operator error: {e}")
 
     return actions
 

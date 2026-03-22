@@ -19,6 +19,7 @@ import artifacts
 import backlog
 import heartbeat
 import intake
+import operator as factory_operator
 import pipeline
 import terminal
 from config import settings
@@ -446,6 +447,53 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
+
+
+# ---------------------------------------------------------------------------
+# Operator — LLM-driven factory management with rotating lenses
+# ---------------------------------------------------------------------------
+
+@app.get("/api/operator/lenses")
+async def list_operator_lenses() -> list[dict]:
+    return factory_operator.list_lenses()
+
+
+@app.get("/api/operator/lenses/{lens_id}")
+async def get_operator_lens(lens_id: str) -> dict:
+    lens = factory_operator.get_lens(lens_id)
+    if lens is None:
+        raise HTTPException(status_code=404, detail="Lens not found")
+    return lens
+
+
+@app.put("/api/operator/lenses/{lens_id}")
+async def save_operator_lens(lens_id: str, body: dict) -> dict[str, str]:
+    _require_controls()
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    factory_operator.save_lens(lens_id, prompt)
+    return {"status": "saved"}
+
+
+@app.delete("/api/operator/lenses/{lens_id}")
+async def delete_operator_lens(lens_id: str) -> dict[str, str]:
+    _require_controls()
+    if not factory_operator.delete_lens(lens_id):
+        raise HTTPException(status_code=404, detail="Lens not found")
+    return {"status": "deleted"}
+
+
+@app.get("/api/operator/rotation")
+async def operator_rotation() -> dict:
+    return factory_operator.get_rotation_state()
+
+
+@app.post("/api/operator/run")
+async def run_operator_now(lens_id: str | None = None) -> dict:
+    """Manually trigger an operator cycle with a specific or next-in-rotation lens."""
+    _require_controls()
+    return factory_operator.run_operator(lens_id=lens_id)
 
 
 # ---------------------------------------------------------------------------
