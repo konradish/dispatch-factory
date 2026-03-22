@@ -73,24 +73,32 @@ Rules:
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as script:
         script.write("""
-import sys, json, pathlib
+import asyncio, sys, json, pathlib
 
-prompt_path = sys.argv[1]
-out_path = sys.argv[2]
-max_turns = int(sys.argv[3])
+async def main():
+    prompt_path = sys.argv[1]
+    out_path = sys.argv[2]
+    max_turns = int(sys.argv[3])
 
-prompt = pathlib.Path(prompt_path).read_text()
+    prompt = pathlib.Path(prompt_path).read_text()
 
-from claude_agent_sdk import query, ClaudeAgentOptions, TextBlock
-options = ClaudeAgentOptions(max_turns=max_turns)
-result = query(prompt=prompt, options=options)
+    from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+    options = ClaudeAgentOptions(max_turns=max_turns)
 
-text = ""
-for block in result.result:
-    if isinstance(block, TextBlock):
-        text += block.text
+    result_parts = []
+    result_fallback = None
+    async for msg in query(prompt=prompt, options=options):
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if isinstance(block, TextBlock):
+                    result_parts.append(block.text)
+        if type(msg).__name__ == 'ResultMessage' and hasattr(msg, 'result'):
+            result_fallback = msg.result
 
-pathlib.Path(out_path).write_text(json.dumps({"response": text}))
+    text = chr(10).join(result_parts) if result_parts else (result_fallback or '')
+    pathlib.Path(out_path).write_text(json.dumps({"response": text}))
+
+asyncio.run(main())
 """)
         script_path = script.name
 
