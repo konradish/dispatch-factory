@@ -86,7 +86,7 @@ export interface BacklogTicket {
   project: string;
   priority: "low" | "normal" | "high" | "urgent";
   flags: string;
-  status: "pending" | "dispatched" | "completed" | "failed" | "cancelled";
+  status: "intake" | "needs_input" | "ready" | "pending" | "dispatched" | "completed" | "failed" | "cancelled";
   source: string;
   session_id: string | null;
   created_at: string;

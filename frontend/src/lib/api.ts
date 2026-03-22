@@ -144,6 +144,16 @@ export function deleteBacklogTicket(
   });
 }
 
+export function updateBacklogTicket(
+  id: string,
+  updates: Record<string, unknown>
+): Promise<ApiResult<BacklogTicket>> {
+  return request<BacklogTicket>(`/api/backlog/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
 export function dispatchBacklogTicket(
   id: string
 ): Promise<ApiResult<{ status: string }>> {

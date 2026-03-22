@@ -53,7 +53,7 @@ def create_ticket(
         "project": project,
         "priority": priority,  # low, normal, high, urgent
         "flags": flags or [],
-        "status": "pending",  # pending, dispatched, completed, failed, cancelled
+        "status": "pending",  # intake, needs_input, ready, pending, dispatched, completed, failed, cancelled
         "source": source,  # manual, heartbeat, auto
         "session_id": None,
         "created_at": time.time(),
