@@ -34,3 +34,6 @@ Thumbs.db
 
 # Scratch files (drafts, notes, not source code)
 .scratch/
+
+# Temp files from LLM subprocess calls
+tmp*.json
