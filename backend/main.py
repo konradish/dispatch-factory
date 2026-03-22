@@ -18,6 +18,7 @@ from pydantic import BaseModel
 import artifacts
 import backlog
 import heartbeat
+import intake
 import pipeline
 import terminal
 from config import settings
@@ -445,6 +446,25 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
+
+
+# ---------------------------------------------------------------------------
+# Intake — LLM-assisted ticket structuring
+# ---------------------------------------------------------------------------
+
+class IntakeRequest(BaseModel):
+    input: str
+    context: str = ""
+
+
+@app.post("/api/intake")
+async def intake_structure(req: IntakeRequest) -> dict:
+    """Send rough idea to LLM, get back a structured ticket proposal."""
+    _require_controls()
+    text = req.input.strip()
+    if not text or len(text) > 1000:
+        raise HTTPException(status_code=400, detail="Input must be 1-1000 characters")
+    return intake.structure_ticket(text, req.context)
 
 
 # ---------------------------------------------------------------------------
