@@ -7,6 +7,8 @@ import type {
   HistorySession,
   Brief,
   LogEvent,
+  BacklogTicket,
+  HeartbeatState,
 } from "@/types";
 
 interface ApiResult<T> {
@@ -111,4 +113,53 @@ export function fetchFactoryLog(
   limit = 100
 ): Promise<ApiResult<LogEvent[]>> {
   return request<LogEvent[]>(`/api/log?limit=${limit}`);
+}
+
+export function fetchBacklog(
+  status?: string
+): Promise<ApiResult<BacklogTicket[]>> {
+  const qs = status ? `?status=${status}` : "";
+  return request<BacklogTicket[]>(`/api/backlog${qs}`);
+}
+
+export function createBacklogTicket(ticket: {
+  task: string;
+  project: string;
+  priority: string;
+  flags: string[];
+}): Promise<ApiResult<BacklogTicket>> {
+  return request<BacklogTicket>("/api/backlog", {
+    method: "POST",
+    body: JSON.stringify(ticket),
+  });
+}
+
+export function deleteBacklogTicket(
+  id: string
+): Promise<ApiResult<{ status: string }>> {
+  return request<{ status: string }>(`/api/backlog/${id}`, {
+    method: "DELETE",
+  });
+}
+
+export function dispatchBacklogTicket(
+  id: string
+): Promise<ApiResult<{ status: string }>> {
+  return request<{ status: string }>(`/api/backlog/${id}/dispatch`, {
+    method: "POST",
+  });
+}
+
+export function fetchHeartbeat(): Promise<ApiResult<HeartbeatState>> {
+  return request<HeartbeatState>("/api/heartbeat");
+}
+
+export function toggleAutoDispatch(
+  enabled: boolean,
+  maxConcurrent: number
+): Promise<ApiResult<{ status: string }>> {
+  return request<{ status: string }>(
+    `/api/heartbeat/auto-dispatch?enabled=${enabled}&max_concurrent=${maxConcurrent}`,
+    { method: "POST" }
+  );
 }

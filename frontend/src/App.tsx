@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from "react";
 import PipelineList from "@/components/PipelineList";
 import TicketCreate from "@/components/TicketCreate";
+import BacklogView from "@/components/BacklogView";
 import HistoryView from "@/components/HistoryView";
 import FactoryLog from "@/components/FactoryLog";
 import TerminalPanel from "@/components/TerminalPanel";
 import SessionDetail from "@/components/SessionDetail";
+import HeartbeatIndicator from "@/components/HeartbeatIndicator";
 import type { TerminalTab } from "@/components/TerminalPanel";
 import { attachTerminal } from "@/lib/api";
-type Tab = "pipeline" | "create" | "history" | "log";
+type Tab = "pipeline" | "create" | "backlog" | "history" | "log";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
@@ -80,10 +82,7 @@ export default function App() {
             <h1 className="mono text-sm font-semibold tracking-wider text-gray-200">
               DISPATCH FACTORY
             </h1>
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-accent-green animate-pulse" />
-              <span className="text-xs text-gray-500">online</span>
-            </div>
+            <HeartbeatIndicator />
           </div>
 
           <nav className="flex items-center gap-1">
@@ -106,6 +105,16 @@ export default function App() {
               }`}
             >
               Create Ticket
+            </button>
+            <button
+              onClick={() => setActiveTab("backlog")}
+              className={`px-4 py-1.5 text-sm rounded transition-colors ${
+                activeTab === "backlog"
+                  ? "bg-bg-surface-alt text-gray-200"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Backlog
             </button>
             <button
               onClick={() => setActiveTab("history")}
@@ -150,6 +159,9 @@ export default function App() {
         )}
         {activeTab === "create" && (
           <TicketCreate onDispatched={handleDispatched} />
+        )}
+        {activeTab === "backlog" && (
+          <BacklogView onSelectSession={setSelectedSession} />
         )}
         {activeTab === "history" && <HistoryView onSelectSession={setSelectedSession} />}
         {activeTab === "log" && <FactoryLog onSelectSession={setSelectedSession} />}

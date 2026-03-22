@@ -16,6 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import artifacts
+import backlog
+import heartbeat
 import terminal
 from config import settings
 
@@ -110,13 +112,16 @@ async def lifespan(app: FastAPI):
         logger.warning("dispatch binary not found at %s", dispatch_path)
 
     watcher_task = asyncio.create_task(_watch_artifacts())
+    heartbeat_task = asyncio.create_task(heartbeat.heartbeat_loop(interval=30))
     yield
     # Shutdown
     watcher_task.cancel()
-    try:
-        await watcher_task
-    except asyncio.CancelledError:
-        pass
+    heartbeat_task.cancel()
+    for task in [watcher_task, heartbeat_task]:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="dispatch-factory", lifespan=lifespan)
@@ -333,6 +338,112 @@ async def detach_terminal(session_name: str) -> dict[str, str]:
 async def list_terminals() -> dict[str, int]:
     _require_terminal()
     return terminal.list_ttyd()
+
+
+# ---------------------------------------------------------------------------
+# Backlog endpoints (gated)
+# ---------------------------------------------------------------------------
+
+class BacklogTicketRequest(BaseModel):
+    task: str
+    project: str
+    priority: str = "normal"
+    flags: list[str] = []
+
+
+@app.get("/api/backlog")
+async def list_backlog(status: str | None = None) -> list[dict]:
+    return backlog.list_tickets(status=status)
+
+
+@app.post("/api/backlog")
+async def create_backlog_ticket(req: BacklogTicketRequest) -> dict:
+    _require_controls()
+
+    if not PROJECT_NAME_RE.match(req.project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    task = req.task.strip()
+    if not task or len(task) > 500:
+        raise HTTPException(status_code=400, detail="Task must be 1-500 characters")
+    for flag in req.flags:
+        if flag not in ALLOWED_FLAGS:
+            raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
+    if req.priority not in ("low", "normal", "high", "urgent"):
+        raise HTTPException(status_code=400, detail="Priority must be low/normal/high/urgent")
+
+    return backlog.create_ticket(
+        task=task,
+        project=req.project,
+        priority=req.priority,
+        flags=req.flags,
+        source="manual",
+    )
+
+
+@app.patch("/api/backlog/{ticket_id}")
+async def update_backlog_ticket(ticket_id: str, updates: dict) -> dict:
+    _require_controls()
+    result = backlog.update_ticket(ticket_id, updates)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return result
+
+
+@app.delete("/api/backlog/{ticket_id}")
+async def delete_backlog_ticket(ticket_id: str) -> dict[str, str]:
+    _require_controls()
+    deleted = backlog.delete_ticket(ticket_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return {"status": "deleted"}
+
+
+@app.post("/api/backlog/{ticket_id}/dispatch")
+async def dispatch_backlog_ticket(ticket_id: str) -> dict:
+    """Dispatch a pending backlog ticket immediately."""
+    _require_controls()
+
+    tickets = backlog.list_tickets()
+    ticket = next((t for t in tickets if t["id"] == ticket_id), None)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if ticket["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, not pending")
+
+    cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
+    cmd.extend(ticket.get("flags", []))
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="dispatch binary not found")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="dispatch timed out")
+
+    if result.returncode == 0:
+        match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
+        session_id = match.group(1) if match else "unknown"
+        backlog.mark_dispatched(ticket_id, session_id)
+        return {"status": "dispatched", "session_id": session_id, "stdout": result.stdout}
+
+    return {"status": "error", "stderr": result.stderr}
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/heartbeat")
+async def heartbeat_status() -> dict:
+    return heartbeat.get_state()
+
+
+@app.post("/api/heartbeat/auto-dispatch")
+async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) -> dict:
+    _require_controls()
+    heartbeat._state["auto_dispatch_enabled"] = enabled
+    heartbeat._state["max_concurrent"] = max_concurrent
+    return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
 
 
 # ---------------------------------------------------------------------------

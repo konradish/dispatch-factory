@@ -79,6 +79,32 @@ export interface Brief {
   >;
 }
 
+// Matches /api/backlog response
+export interface BacklogTicket {
+  id: string;
+  task: string;
+  project: string;
+  priority: "low" | "normal" | "high" | "urgent";
+  flags: string;
+  status: "pending" | "dispatched" | "completed" | "failed" | "cancelled";
+  source: string;
+  session_id: string | null;
+  created_at: string;
+  dispatched_at: string | null;
+  completed_at: string | null;
+}
+
+// Matches /api/heartbeat response
+export interface HeartbeatState {
+  last_beat: string;
+  beats: number;
+  last_actions: string[];
+  auto_dispatch_enabled: boolean;
+  max_concurrent: number;
+  started_at: string;
+  uptime_seconds: number;
+}
+
 // Matches /api/log response
 export interface LogEvent {
   timestamp: number;
