@@ -352,6 +352,7 @@ class BacklogTicketRequest(BaseModel):
     project: str
     priority: str = "normal"
     flags: list[str] = []
+    status: str = "pending"
 
 
 @app.get("/api/backlog")
@@ -373,14 +374,22 @@ async def create_backlog_ticket(req: BacklogTicketRequest) -> dict:
             raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
     if req.priority not in ("low", "normal", "high", "urgent"):
         raise HTTPException(status_code=400, detail="Priority must be low/normal/high/urgent")
+    valid_statuses = ("intake", "needs_input", "ready", "pending")
+    if req.status not in valid_statuses:
+        raise HTTPException(status_code=400, detail=f"Status must be one of: {valid_statuses}")
 
-    return backlog.create_ticket(
+    ticket = backlog.create_ticket(
         task=task,
         project=req.project,
         priority=req.priority,
         flags=req.flags,
         source="manual",
     )
+    # Override default status if specified
+    if req.status != "pending":
+        backlog.update_ticket(ticket["id"], {"status": req.status})
+        ticket["status"] = req.status
+    return ticket
 
 
 @app.patch("/api/backlog/{ticket_id}")
@@ -410,8 +419,8 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     ticket = next((t for t in tickets if t["id"] == ticket_id), None)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    if ticket["status"] != "pending":
-        raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, not pending")
+    if ticket["status"] not in ("pending", "ready"):
+        raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
 
     cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
     cmd.extend(ticket.get("flags", []))

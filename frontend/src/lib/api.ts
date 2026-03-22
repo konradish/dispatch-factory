@@ -129,6 +129,7 @@ export function createBacklogTicket(ticket: {
   project: string;
   priority: string;
   flags: string[];
+  status?: string;
 }): Promise<ApiResult<BacklogTicket>> {
   return request<BacklogTicket>("/api/backlog", {
     method: "POST",

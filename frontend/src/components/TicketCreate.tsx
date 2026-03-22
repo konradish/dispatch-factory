@@ -130,7 +130,12 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
     const t = intake.tickets[idx];
     setError(null);
 
-    const res = await createBacklogTicket({ task: t.task, project: t.project, priority: t.priority, flags: t.flags });
+    // Set status based on whether ticket is fully specified
+    const hasQuestions = intake.questions.length > 0;
+    const isFullySpecified = t.task.trim() && t.project && t.project !== "unknown";
+    const status = !isFullySpecified || hasQuestions ? "needs_input" : "ready";
+
+    const res = await createBacklogTicket({ task: t.task, project: t.project, priority: t.priority, flags: t.flags, status });
     if (res.error) {
       setTicketResults((prev) => ({ ...prev, [idx]: { type: "error", message: res.error! } }));
     } else if (res.data) {
