@@ -135,7 +135,11 @@ function BriefCard({ brief }: { brief: Brief }) {
   );
 }
 
-export default function HistoryView() {
+interface HistoryViewProps {
+  onSelectSession: (sessionId: string) => void;
+}
+
+export default function HistoryView({ onSelectSession }: HistoryViewProps) {
   const [sessions, setSessions] = useState<HistorySession[]>([]);
   const [brief, setBrief] = useState<Brief | null>(null);
 
@@ -174,7 +178,8 @@ export default function HistoryView() {
               {sessions.map((s) => (
                 <tr
                   key={s.id}
-                  className="border-b border-gray-800/30 hover:bg-bg-surface-alt/30 transition-colors h-9"
+                  onClick={() => onSelectSession(s.id)}
+                  className="border-b border-gray-800/30 hover:bg-bg-surface-alt/30 transition-colors h-9 cursor-pointer"
                 >
                   <td className="py-1 px-3 mono text-gray-500 whitespace-nowrap">
                     {relativeTime(s.mtime)}

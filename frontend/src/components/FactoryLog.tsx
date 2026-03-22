@@ -66,7 +66,11 @@ function groupByDay(events: LogEvent[]): Map<string, LogEvent[]> {
   return groups;
 }
 
-export default function FactoryLog() {
+interface FactoryLogProps {
+  onSelectSession: (sessionId: string) => void;
+}
+
+export default function FactoryLog({ onSelectSession }: FactoryLogProps) {
   const [events, setEvents] = useState<LogEvent[]>([]);
 
   useEffect(() => {
@@ -128,6 +132,15 @@ export default function FactoryLog() {
                         {event.project}
                       </span>
                     </span>
+                  )}
+                  {event.session && (
+                    <button
+                      onClick={() => onSelectSession(event.session)}
+                      className="mono text-[11px] text-gray-500 hover:text-accent-cyan transition-colors shrink-0"
+                      title="View session detail"
+                    >
+                      {event.session}
+                    </button>
                   )}
                   <span className="text-xs text-gray-400 leading-relaxed">
                     {event.description}

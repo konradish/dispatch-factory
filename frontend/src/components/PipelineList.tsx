@@ -66,9 +66,10 @@ function StageProgress({ artifactTypes }: { artifactTypes: string[] }) {
 
 interface PipelineListProps {
   onAttachTerminal: (sessionName: string, port: number) => void;
+  onSelectSession: (sessionId: string) => void;
 }
 
-export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
+export default function PipelineList({ onAttachTerminal, onSelectSession }: PipelineListProps) {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeTmux, setActiveTmux] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -174,9 +175,12 @@ export default function PipelineList({ onAttachTerminal }: PipelineListProps) {
                       <span className="mono text-sm font-medium text-gray-200">
                         {session.project}
                       </span>
-                      <span className="mono text-xs text-gray-600">
+                      <button
+                        onClick={() => onSelectSession(session.id)}
+                        className="mono text-xs text-gray-600 hover:text-accent-cyan transition-colors"
+                      >
                         {session.id}
-                      </span>
+                      </button>
                     </div>
                     <div className="flex items-center gap-2">
                       {inTmux && (

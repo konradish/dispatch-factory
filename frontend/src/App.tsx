@@ -4,6 +4,7 @@ import TicketCreate from "@/components/TicketCreate";
 import HistoryView from "@/components/HistoryView";
 import FactoryLog from "@/components/FactoryLog";
 import TerminalPanel from "@/components/TerminalPanel";
+import SessionDetail from "@/components/SessionDetail";
 import type { TerminalTab } from "@/components/TerminalPanel";
 import { attachTerminal } from "@/lib/api";
 type Tab = "pipeline" | "create" | "history" | "log";
@@ -13,6 +14,7 @@ export default function App() {
   const [terminalVisible, setTerminalVisible] = useState(false);
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalEnabled] = useState(true); // Will be driven by config later
+  const [selectedSession, setSelectedSession] = useState<string | null>(null);
 
   const toggleTerminal = useCallback(() => {
     setTerminalVisible((v) => !v);
@@ -144,13 +146,13 @@ export default function App() {
       {/* Main content */}
       <main className="flex-1 max-w-6xl mx-auto w-full px-6 py-6">
         {activeTab === "pipeline" && (
-          <PipelineList onAttachTerminal={handleAttachTerminal} />
+          <PipelineList onAttachTerminal={handleAttachTerminal} onSelectSession={setSelectedSession} />
         )}
         {activeTab === "create" && (
           <TicketCreate onDispatched={handleDispatched} />
         )}
-        {activeTab === "history" && <HistoryView />}
-        {activeTab === "log" && <FactoryLog />}
+        {activeTab === "history" && <HistoryView onSelectSession={setSelectedSession} />}
+        {activeTab === "log" && <FactoryLog onSelectSession={setSelectedSession} />}
       </main>
 
       {/* Keyboard hints */}
@@ -164,6 +166,14 @@ export default function App() {
         </kbd>
         <span>new ticket</span>
       </div>
+
+      {/* Session detail slide-over */}
+      {selectedSession && (
+        <SessionDetail
+          sessionId={selectedSession}
+          onClose={() => setSelectedSession(null)}
+        />
+      )}
 
       {/* Terminal panel */}
       <TerminalPanel
