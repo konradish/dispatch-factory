@@ -26,8 +26,10 @@ _state: dict = {
     "last_beat": 0.0,
     "beats": 0,
     "last_actions": [],
-    "auto_dispatch_enabled": False,
-    "max_concurrent": 3,
+    "auto_dispatch_enabled": settings.heartbeat.auto_dispatch,
+    "max_concurrent": settings.heartbeat.max_concurrent,
+    "enabled": settings.heartbeat.enabled,
+    "interval_minutes": settings.heartbeat.interval_minutes,
 }
 
 
@@ -36,10 +38,17 @@ def get_state() -> dict:
     return {**_state, "uptime_seconds": time.time() - _state.get("started_at", time.time())}
 
 
-async def heartbeat_loop(interval: int = 30) -> None:
+async def heartbeat_loop(interval: int | None = None) -> None:
     """Main heartbeat loop — runs as a background asyncio task."""
+    if not _state.get("enabled", False):
+        logger.info("Heartbeat disabled in config")
+        return
+
+    if interval is None:
+        interval = _state["interval_minutes"] * 60
+
     _state["started_at"] = time.time()
-    logger.info("Heartbeat started (interval=%ds)", interval)
+    logger.info("Heartbeat started (interval=%ds, auto_dispatch=%s)", interval, _state["auto_dispatch_enabled"])
 
     while True:
         try:

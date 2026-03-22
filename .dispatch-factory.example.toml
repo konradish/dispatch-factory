@@ -32,3 +32,16 @@ allow_input = false
 # Port range for ttyd instances (one per active worker)
 port_start = 7681
 port_end = 7699
+
+[heartbeat]
+# Enable periodic heartbeat (reconcile backlog, detect stuck workers)
+enabled = false
+
+# Interval in minutes between heartbeat ticks
+interval_minutes = 30
+
+# Auto-dispatch pending backlog tickets when workers have capacity
+auto_dispatch = false
+
+# Maximum concurrent workers for auto-dispatch
+max_concurrent = 3

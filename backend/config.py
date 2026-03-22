@@ -22,6 +22,14 @@ class TerminalConfig:
 
 
 @dataclass
+class HeartbeatConfig:
+    enabled: bool = False
+    interval_minutes: int = 30
+    auto_dispatch: bool = False
+    max_concurrent: int = 3
+
+
+@dataclass
 class Config:
     artifacts_dir: str = "~/.local/share/dispatch"
     dispatch_bin: str = "~/.local/bin/dispatch"
@@ -29,6 +37,7 @@ class Config:
     port: int = 8420
     enable_controls: bool = False
     terminal: TerminalConfig = field(default_factory=TerminalConfig)
+    heartbeat: HeartbeatConfig = field(default_factory=HeartbeatConfig)
 
     def __post_init__(self) -> None:
         self.artifacts_dir = str(Path(self.artifacts_dir).expanduser())
@@ -56,16 +65,17 @@ def load_config() -> Config:
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
-    # Flatten TOML sections: [dispatch], [server], [terminal] → flat dict
+    # Flatten TOML sections: [dispatch], [server] → flat dict
+    # Keep [terminal] and [heartbeat] as nested configs
+    nested_keys = {"terminal", "heartbeat"}
     flat: dict = {}
     for key, val in raw.items():
-        if isinstance(val, dict) and key != "terminal":
+        if isinstance(val, dict) and key not in nested_keys:
             flat.update(val)
-        elif key != "terminal":
+        elif key not in nested_keys:
             flat[key] = val
 
     terminal_raw = raw.get("terminal", {})
-    # Map config field names to dataclass field names
     term_map = {"port_start": "port_range_start", "port_end": "port_range_end"}
     terminal_kwargs = {}
     for k, v in terminal_raw.items():
@@ -74,9 +84,13 @@ def load_config() -> Config:
             terminal_kwargs[field_name] = v
     terminal = TerminalConfig(**terminal_kwargs)
 
-    known_fields = Config.__dataclass_fields__.keys() - {"terminal"}
+    heartbeat_raw = raw.get("heartbeat", {})
+    heartbeat_kwargs = {k: v for k, v in heartbeat_raw.items() if k in HeartbeatConfig.__dataclass_fields__}
+    hb = HeartbeatConfig(**heartbeat_kwargs)
+
+    known_fields = Config.__dataclass_fields__.keys() - {"terminal", "heartbeat"}
     cfg_kwargs = {k: v for k, v in flat.items() if k in known_fields}
-    return Config(**cfg_kwargs, terminal=terminal)
+    return Config(**cfg_kwargs, terminal=terminal, heartbeat=hb)
 
 
 # Module-level singleton — import this from other modules.
