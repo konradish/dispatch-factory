@@ -146,9 +146,10 @@ function VerifierSection({ data }: { data: Record<string, unknown> }) {
   const status = String(data.status ?? "");
   const stages = (data.stages as Record<string, string>) ?? {};
   const reason = String(data.reason ?? "");
-  const statusColor = status === "PASSED" || status === "SUCCESS"
+  const statusColor = status === "PASSED" || status === "SUCCESS" || status === "DEPLOYED"
     ? "text-accent-green"
-    : "text-accent-red";
+    : status === "FAILED" ? "text-accent-red"
+    : "text-gray-400";
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
