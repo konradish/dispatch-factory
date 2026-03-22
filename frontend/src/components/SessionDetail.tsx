@@ -256,6 +256,65 @@ function ResultSection({ data }: { data: string }) {
   );
 }
 
+// --- Verdict banner ---
+
+function VerdictBanner({ artifacts, state }: { artifacts: Record<string, unknown>; state: string }) {
+  const verifier = artifacts.verifier as Record<string, unknown> | undefined;
+  const healer = artifacts.healer as Record<string, unknown> | undefined;
+  const reviewer = artifacts.reviewer as Record<string, unknown> | undefined;
+
+  const deployStatus = verifier?.status as string | undefined;
+  const healerAction = healer?.action as string | undefined;
+  const verdict = reviewer?.verdict as string | undefined;
+
+  // Determine the one-line summary
+  let message: string;
+  let bgClass: string;
+  let icon: string;
+
+  if (deployStatus === "DEPLOYED") {
+    message = "Shipped to production";
+    bgClass = "bg-accent-green/10 border-accent-green/30 text-accent-green";
+    icon = "✓";
+  } else if (state === "deployed") {
+    message = "Deployed";
+    bgClass = "bg-accent-green/10 border-accent-green/30 text-accent-green";
+    icon = "✓";
+  } else if (deployStatus === "FAILED" && healerAction === "abort") {
+    const diagnosis = (healer?.diagnosis as string) ?? "";
+    message = `Not applied — ${diagnosis.slice(0, 100)}`;
+    bgClass = "bg-accent-red/10 border-accent-red/30 text-accent-red";
+    icon = "✕";
+  } else if (deployStatus === "FAILED") {
+    message = `Deploy failed at ${verifier?.stage ?? "unknown"} stage`;
+    bgClass = "bg-accent-red/10 border-accent-red/30 text-accent-red";
+    icon = "✕";
+  } else if (state === "error") {
+    message = "Failed with error";
+    bgClass = "bg-accent-red/10 border-accent-red/30 text-accent-red";
+    icon = "✕";
+  } else if (verdict === "APPROVE" && !verifier) {
+    message = "Reviewed and approved — not yet verified/deployed";
+    bgClass = "bg-accent-cyan/10 border-accent-cyan/30 text-accent-cyan";
+    icon = "→";
+  } else if (state === "running") {
+    message = "In progress";
+    bgClass = "bg-accent-blue/10 border-accent-blue/30 text-accent-blue";
+    icon = "⋯";
+  } else {
+    message = `Completed (${state})`;
+    bgClass = "bg-gray-800/50 border-gray-700 text-gray-400";
+    icon = "•";
+  }
+
+  return (
+    <div className={`rounded-lg border px-4 py-3 flex items-center gap-3 ${bgClass}`}>
+      <span className="text-lg">{icon}</span>
+      <span className="text-sm">{message}</span>
+    </div>
+  );
+}
+
 // --- Timeline stage config ---
 
 const STAGE_CONFIG: {
@@ -390,7 +449,10 @@ export default function SessionDetail({ sessionId, onClose }: SessionDetailProps
           )}
 
           {session && !loading && (
-            <div className="space-y-0">
+            <div className="space-y-4">
+              {/* Verdict banner — quick answer to "did this ship?" */}
+              <VerdictBanner artifacts={artifacts} state={session.state} />
+
               {/* Pipeline timeline */}
               {STAGE_CONFIG.filter((stage) => artifacts[stage.key] != null).length === 0 ? (
                 <div className="text-gray-600 text-sm py-8 text-center">
