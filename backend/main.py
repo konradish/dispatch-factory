@@ -437,6 +437,16 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
             detail=f"Circuit breaker tripped for {ticket['project']} — fix deploy pipeline first",
         )
 
+    # Priority inversion guard: block lower-priority dispatch when eligible
+    # higher-priority tickets are pending and capacity is at max
+    active = artifacts.get_active_sessions()
+    max_concurrent = heartbeat._state.get("max_concurrent", 3)
+    if len(active) >= max_concurrent - 1 and backlog.has_eligible_higher_priority(ticket.get("priority", "normal")):
+        raise HTTPException(
+            status_code=409,
+            detail="Higher-priority tickets are pending; dispatch those first",
+        )
+
     cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
     cmd.extend(ticket.get("flags", []))
 

@@ -116,6 +116,35 @@ def has_inflight_ticket(project: str) -> bool:
     return any(t["project"] == project for t in dispatched)
 
 
+def has_eligible_higher_priority(priority: str) -> bool:
+    """Check if any pending tickets exist with strictly higher priority that are eligible for dispatch.
+
+    A pending ticket is eligible if its project is not circuit-broken and has no
+    in-flight ticket.  This prevents priority inversion: lower-priority work
+    should not consume capacity when higher-priority work is waiting.
+    """
+    import circuit_breaker
+
+    priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+    current_rank = priority_order.get(priority, 2)
+    if current_rank == 0:
+        return False  # Nothing is higher than urgent
+
+    pending = list_tickets(status="pending")
+    for t in pending:
+        t_rank = priority_order.get(t.get("priority", "normal"), 2)
+        if t_rank >= current_rank:
+            continue  # Not higher priority
+        # Check eligibility: project not blocked and no in-flight ticket
+        project = t["project"]
+        if has_inflight_ticket(project):
+            continue
+        if circuit_breaker.is_project_blocked(project):
+            continue
+        return True
+    return False
+
+
 def delete_ticket(ticket_id: str) -> bool:
     """Delete a ticket by ID."""
     tickets = _read_backlog()

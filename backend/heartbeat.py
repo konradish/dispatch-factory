@@ -281,6 +281,13 @@ def _auto_dispatch() -> list[str]:
             actions.append(f"circuit-breaker blocked dispatch for {ticket['id']} ({ticket['project']})")
             continue
 
+        # Priority inversion guard: when this dispatch would fill the last slot,
+        # reject lower-priority tickets if eligible higher-priority work is pending
+        remaining_slots = slots - dispatched_count
+        if remaining_slots <= 1 and backlog.has_eligible_higher_priority(ticket.get("priority", "normal")):
+            actions.append(f"priority_inversion_prevented: {ticket['id']} ({ticket.get('priority', 'normal')}) — higher-priority tickets pending")
+            continue
+
         # Dispatch via CLI
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         cmd.extend(ticket.get("flags", []))
