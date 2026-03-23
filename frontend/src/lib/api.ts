@@ -10,6 +10,7 @@ import type {
   BacklogTicket,
   HeartbeatState,
   SelfImprovementState,
+  MetaWorkRatio,
   ProjectHealthEntry,
   PipelineSummary,
   PipelineStageDetail,
@@ -181,6 +182,10 @@ export function toggleAutoDispatch(
 
 export function fetchSelfImprovement(): Promise<ApiResult<SelfImprovementState>> {
   return request<SelfImprovementState>("/api/self-improvement");
+}
+
+export function fetchMetaWorkRatio(): Promise<ApiResult<MetaWorkRatio>> {
+  return request<MetaWorkRatio>("/api/meta-work-ratio");
 }
 
 export function fetchPipelineSummary(): Promise<ApiResult<PipelineSummary>> {

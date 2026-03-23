@@ -20,6 +20,7 @@ import backlog
 import circuit_breaker
 import cleared_healed_sessions
 import empty_backlog_detector
+import meta_work_ratio
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -381,6 +382,11 @@ def _auto_dispatch() -> list[str]:
         # Pre-dispatch guard: skip if project already has an in-flight ticket
         if backlog.has_inflight_ticket(ticket["project"]):
             actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
+            continue
+
+        # Meta-work ratio: block dispatch-factory work when ratio is too high
+        if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
+            actions.append(f"meta-work-ratio blocked dispatch for {ticket['id']} (dispatch-factory)")
             continue
 
         # Circuit breaker: block dispatches to projects with consecutive failures
