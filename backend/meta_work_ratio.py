@@ -56,9 +56,12 @@ def get_ratio() -> dict:
 def is_blocked(priority: str = "normal") -> bool:
     """Check if dispatch-factory work is blocked by meta-work ratio.
 
-    High-priority and urgent tickets are exempt from the block.
+    Only urgent tickets (human-escalated) are exempt from the block.
+    High-priority tickets are still subject to the ratio — auto-generated
+    factory tickets often arrive as high-priority, which previously
+    allowed them to bypass the breaker entirely.
     """
-    if priority in ("high", "urgent"):
+    if priority == "urgent":
         return False
 
     info = get_ratio()
