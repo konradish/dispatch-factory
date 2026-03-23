@@ -110,6 +110,12 @@ def next_pending(project: str | None = None) -> dict | None:
     return pending[0]
 
 
+def has_inflight_ticket(project: str) -> bool:
+    """Check if a project already has a dispatched (in-flight) ticket."""
+    dispatched = list_tickets(status="dispatched")
+    return any(t["project"] == project for t in dispatched)
+
+
 def delete_ticket(ticket_id: str) -> bool:
     """Delete a ticket by ID."""
     tickets = _read_backlog()

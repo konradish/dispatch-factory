@@ -423,6 +423,13 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     if ticket["status"] not in ("pending", "ready"):
         raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
 
+    # Pre-dispatch guard: reject if project already has an in-flight ticket
+    if backlog.has_inflight_ticket(ticket["project"]):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project {ticket['project']} already has an in-flight ticket",
+        )
+
     # Circuit breaker: block dispatches to tripped projects
     if circuit_breaker.is_project_blocked(ticket["project"]):
         raise HTTPException(

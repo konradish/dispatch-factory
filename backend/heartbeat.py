@@ -268,6 +268,11 @@ def _auto_dispatch() -> list[str]:
         if dispatched_count >= slots:
             break
 
+        # Pre-dispatch guard: skip if project already has an in-flight ticket
+        if backlog.has_inflight_ticket(ticket["project"]):
+            actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
+            continue
+
         # Circuit breaker: block dispatches to projects with consecutive failures
         if ticket["project"] in blocked_projects:
             continue
