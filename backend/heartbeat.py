@@ -24,6 +24,7 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
+import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -105,11 +106,14 @@ def _beat() -> list[str]:
     #    dispatch-factory, lawpass, recipebrain — see PR #32).
     actions.extend(_sweep_orphaned_healed_sessions())
 
-    # 6. Auto-dispatch pending tickets when capacity available
+    # 6. Reviewer calibration: test canary scenarios on cooldown
+    actions.extend(reviewer_calibration.check_and_run())
+
+    # 7. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 7. Run operator (LLM reasoning with rotating lens)
+    # 8. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
             import factory_operator

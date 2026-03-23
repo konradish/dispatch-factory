@@ -29,6 +29,7 @@ import factory_idle_mode
 import factory_operator
 import pipeline
 import review_policy
+import reviewer_calibration
 import terminal
 from config import settings
 
@@ -950,6 +951,26 @@ async def get_review_policy_prompt(is_healed: bool = False) -> dict[str, str]:
 async def get_review_stats() -> dict:
     """Reviewer verdict statistics — approval rate, healed-session blindness, etc."""
     return review_policy.get_reviewer_stats()
+
+
+# ---------------------------------------------------------------------------
+# Reviewer calibration — canary-based self-test
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/reviewer-calibration")
+async def get_reviewer_calibration() -> dict:
+    """Return the current reviewer calibration state (canary test results)."""
+    return reviewer_calibration.get_calibration_state()
+
+
+@app.get("/api/reviewer-calibration/canaries")
+async def get_calibration_canaries() -> list[dict]:
+    """Return the list of canary scenarios used for calibration."""
+    return [
+        {"id": c["id"], "name": c["name"], "task": c["task"], "expected_criterion": c["expected_criterion"]}
+        for c in reviewer_calibration.CANARY_SCENARIOS
+    ]
 
 
 # ---------------------------------------------------------------------------
