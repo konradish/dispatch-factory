@@ -9,6 +9,7 @@ import type {
   LogEvent,
   BacklogTicket,
   HeartbeatState,
+  SelfImprovementState,
   PipelineSummary,
   PipelineStageDetail,
 } from "@/types";
@@ -175,6 +176,10 @@ export function toggleAutoDispatch(
     `/api/heartbeat/auto-dispatch?enabled=${enabled}&max_concurrent=${maxConcurrent}`,
     { method: "POST" }
   );
+}
+
+export function fetchSelfImprovement(): Promise<ApiResult<SelfImprovementState>> {
+  return request<SelfImprovementState>("/api/self-improvement");
 }
 
 export function fetchPipelineSummary(): Promise<ApiResult<PipelineSummary>> {
