@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { createTicket, createBacklogTicket } from "@/lib/api";
+import { validateTaskQuality, TASK_MIN_LENGTH } from "@/lib/taskQuality";
 
 const FLAGS = [
   { value: "--no-merge", label: "No merge" },
@@ -353,17 +354,26 @@ export default function TicketCreate({ onDispatched }: TicketCreateProps) {
                         </label>
                       ))}
                     </div>
+                    {/* Task quality warning */}
+                    {(() => {
+                      const warning = validateTaskQuality(t.task);
+                      return warning ? (
+                        <div className="text-[10px] text-accent-yellow bg-accent-yellow/5 border border-accent-yellow/20 rounded px-2 py-1">
+                          {warning}
+                        </div>
+                      ) : null;
+                    })()}
                     <div className="flex gap-2">
                       <button
                         onClick={() => handleDispatchOne(idx)}
-                        disabled={!t.task.trim() || !t.project}
+                        disabled={!t.task.trim() || !t.project || !!validateTaskQuality(t.task)}
                         className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30 disabled:opacity-40"
                       >
                         Dispatch
                       </button>
                       <button
                         onClick={() => handleQueueOne(idx)}
-                        disabled={!t.task.trim() || !t.project}
+                        disabled={!t.task.trim() || !t.project || !!validateTaskQuality(t.task)}
                         className="px-3 py-1.5 text-xs font-semibold rounded bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/30 hover:bg-accent-cyan/30 disabled:opacity-40"
                       >
                         Queue
