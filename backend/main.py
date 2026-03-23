@@ -24,6 +24,7 @@ import heartbeat
 import intake
 import factory_operator
 import pipeline
+import review_policy
 import terminal
 from config import settings
 
@@ -777,6 +778,34 @@ async def get_pipeline_stage(stage_id: str) -> dict:
     if stage is None:
         raise HTTPException(status_code=404, detail="Stage not found")
     return stage
+
+
+# ---------------------------------------------------------------------------
+# Review policy
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/review-policy")
+async def get_review_policy() -> dict:
+    """Return the active review policy (rejection criteria, healed-session rules)."""
+    return review_policy.get_policy()
+
+
+@app.get("/api/review-policy/prompt")
+async def get_review_policy_prompt(is_healed: bool = False) -> dict[str, str]:
+    """Return the policy addendum to inject into the reviewer prompt.
+
+    The dispatch runner calls this before each review and appends the result
+    to the reviewer's system prompt. Pass is_healed=true for healed sessions
+    to activate extra scrutiny instructions.
+    """
+    return {"addendum": review_policy.get_reviewer_prompt_addendum(is_healed=is_healed)}
+
+
+@app.get("/api/review-policy/stats")
+async def get_review_stats() -> dict:
+    """Reviewer verdict statistics — approval rate, healed-session blindness, etc."""
+    return review_policy.get_reviewer_stats()
 
 
 # ---------------------------------------------------------------------------

@@ -81,6 +81,24 @@ PIPELINE_DEFINITION: dict = {
                 "max_retries": 5,
                 "includes_feedback": True,
             },
+            "review_policy": {
+                "version": "2",
+                "policy_endpoint": "/api/review-policy",
+                "prompt_addendum_endpoint": "/api/review-policy/prompt",
+                "description": (
+                    "Tightened after leniency audit (2026-03-22): 98% approval rate, "
+                    "healed sessions reviewed without healer context, scope creep tolerated. "
+                    "Dispatch runner should fetch policy and inject into reviewer prompt."
+                ),
+                "healed_session_scrutiny": {
+                    "enabled": True,
+                    "description": (
+                        "When reviewing a healed session, dispatch must pass "
+                        "is_healed=true to the prompt addendum endpoint so the "
+                        "reviewer receives extra scrutiny instructions."
+                    ),
+                },
+            },
         },
         {
             "id": "verifier",
