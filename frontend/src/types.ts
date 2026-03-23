@@ -200,5 +200,6 @@ export interface ProjectHealthEntry {
   last_dispatch_date: string | null;
   open_prs: number | null;
   total_sessions: number;
+  paused: boolean;
   alerts: string[];
 }

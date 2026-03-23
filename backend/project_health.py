@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import artifacts
 import circuit_breaker
 import cleared_healed_sessions
+import paused_projects
 
 
 def _days_ago(timestamp: float) -> float:
@@ -53,6 +54,8 @@ def get_project_health() -> list[dict]:
         if p not in by_project:
             by_project[p] = []
         by_project[p].append(s)
+
+    paused = paused_projects.get_paused()
 
     results = []
     for project in sorted(by_project):
@@ -96,7 +99,8 @@ def get_project_health() -> list[dict]:
 
         # Health score: flag neglected or troubled projects
         alerts: list[str] = []
-        if days_since_dispatch is not None and days_since_dispatch > 7:
+        is_paused = project in paused
+        if days_since_dispatch is not None and days_since_dispatch > 7 and not is_paused:
             alerts.append("neglected")
         if consecutive_failures >= 2:
             alerts.append("deploy_broken")
@@ -123,6 +127,7 @@ def get_project_health() -> list[dict]:
             ),
             "open_prs": open_prs,
             "total_sessions": len(proj_sessions),
+            "paused": is_paused,
             "alerts": alerts,
         })
 
