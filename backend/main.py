@@ -656,13 +656,15 @@ async def clear_project_healed_sessions(project: str, body: dict | None = None) 
 
     reason = (body or {}).get("reason", "manually cleared")
 
-    # Find healed-unverified sessions for this project
+    # Find healed-unverified sessions for this project that aren't already cleared
     sessions = artifacts.list_sessions_with_timestamps()
+    already_cleared = cleared_healed_sessions.get_cleared_ids()
     healed_unverified = [
         s for s in sessions
         if s["project"] == project
         and s.get("summary", {}).get("healed", False)
         and s["state"] == "completed"
+        and s["id"] not in already_cleared
     ]
     session_ids = [s["id"] for s in healed_unverified]
 

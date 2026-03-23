@@ -61,6 +61,9 @@ def get_project_health() -> list[dict]:
     # Projects flagged for empty backlog + HUMAN INPUT NEEDED
     empty_backlog_projects = {e["project"] for e in empty_backlog_detector.detect()}
 
+    # Read cleared healed-session IDs once (not per-project)
+    cleared_ids = cleared_healed_sessions.get_cleared_ids()
+
     results = []
     for project in sorted(by_project):
         proj_sessions = by_project[project]
@@ -93,7 +96,6 @@ def get_project_health() -> list[dict]:
 
         # Count healed-but-unverified sessions (healed + completed, not deployed),
         # excluding sessions that have already been reviewed and cleared.
-        cleared_ids = cleared_healed_sessions.get_cleared_ids()
         healed_unverified = [
             s for s in proj_sessions
             if s.get("summary", {}).get("healed", False)
