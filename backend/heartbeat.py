@@ -17,6 +17,7 @@ import time
 
 import artifacts
 import backlog
+import circuit_breaker
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -85,7 +86,11 @@ def _beat() -> list[str]:
     # 3. Check for stuck workers
     actions.extend(_check_stuck_workers())
 
-    # 3. Run operator (LLM reasoning with rotating lens)
+    # 4. Auto-dispatch pending tickets when capacity available
+    if _state.get("auto_dispatch_enabled", False):
+        actions.extend(_auto_dispatch())
+
+    # 5. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
             import factory_operator
@@ -117,18 +122,23 @@ def _reconcile_backlog() -> list[str]:
             continue
 
         state = session.get("state", "")
+        project = ticket.get("project", "unknown")
         if state in ("deployed", "completed"):
             backlog.mark_completed(ticket["id"], "completed")
             actions.append(f"ticket {ticket['id']} completed ({session_id})")
+            actions.extend(circuit_breaker.record_result(project, success=True))
         elif state == "error":
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} failed ({session_id})")
+            actions.extend(circuit_breaker.record_result(project, success=False))
         elif state == "rolled_back":
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} rolled back ({session_id})")
+            actions.extend(circuit_breaker.record_result(project, success=False))
         elif state == "abandoned":
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} abandoned ({session_id})")
+            actions.extend(circuit_breaker.record_result(project, success=False))
 
     return actions
 
@@ -209,11 +219,26 @@ def _auto_dispatch() -> list[str]:
     if len(active) >= max_concurrent:
         return actions
 
+    blocked_projects: set[str] = set()
     slots = max_concurrent - len(active)
-    for _ in range(slots):
-        ticket = backlog.next_pending()
-        if not ticket:
+    dispatched_count = 0
+    pending = backlog.list_tickets(status="pending")
+
+    # Sort by priority like next_pending does
+    priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+    pending.sort(key=lambda t: (priority_order.get(t.get("priority", "normal"), 2), t["created_at"]))
+
+    for ticket in pending:
+        if dispatched_count >= slots:
             break
+
+        # Circuit breaker: block dispatches to projects with consecutive failures
+        if ticket["project"] in blocked_projects:
+            continue
+        if circuit_breaker.is_project_blocked(ticket["project"]):
+            blocked_projects.add(ticket["project"])
+            actions.append(f"circuit-breaker blocked dispatch for {ticket['id']} ({ticket['project']})")
+            continue
 
         # Dispatch via CLI
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
@@ -232,6 +257,7 @@ def _auto_dispatch() -> list[str]:
                 match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
                 session_id = match.group(1) if match else "unknown"
                 backlog.mark_dispatched(ticket["id"], session_id)
+                dispatched_count += 1
                 actions.append(f"auto-dispatched {ticket['id']} → {session_id}")
             else:
                 actions.append(f"dispatch failed for {ticket['id']}: {result.stderr[:100]}")
