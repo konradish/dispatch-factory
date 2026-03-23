@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createTicket, createBacklogTicket } from "@/lib/api";
-import { validateTaskQuality, TASK_MIN_LENGTH } from "@/lib/taskQuality";
+import { validateTaskQuality } from "@/lib/taskQuality";
 
 const FLAGS = [
   { value: "--no-merge", label: "No merge" },
