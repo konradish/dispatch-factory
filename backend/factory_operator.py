@@ -286,10 +286,6 @@ def _execute_action(action: dict) -> dict:
         # Circuit breaker: block dispatches to tripped projects
         if circuit_breaker.is_project_blocked(ticket["project"]):
             return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
-        # Self-improvement ratio: block product dispatches when factory maintenance is due
-        import self_improvement
-        if self_improvement.should_block_dispatch(ticket["project"]):
-            return {"type": "dispatch", "status": "blocked", "detail": "Self-improvement ratio: next dispatch must be a dispatch-factory ticket"}
         # Actually dispatch
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         cmd.extend(ticket.get("flags", []))
@@ -300,7 +296,6 @@ def _execute_action(action: dict) -> dict:
                 match = re.search(r"session\s*:\s*([\w-]+)", r.stdout)
                 session_id = match.group(1) if match else "unknown"
                 backlog.mark_dispatched(ticket_id, session_id)
-                self_improvement.record_dispatch(ticket["project"])
                 return {"type": "dispatch", "status": "ok", "ticket_id": ticket_id, "session_id": session_id}
             return {"type": "dispatch", "status": "error", "detail": r.stderr[:200]}
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
