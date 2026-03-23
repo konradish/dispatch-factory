@@ -27,20 +27,36 @@ logger = logging.getLogger("dispatch-factory.paused-projects")
 
 PAUSED_FILE = "paused-projects.json"
 
+# Projects that are paused/archived per the direction vector.
+# These are always treated as paused regardless of the runtime JSON state,
+# suppressing neglect alerts and preventing accidental dispatches.
+DEFAULT_PAUSED: dict[str, dict] = {
+    "electricapp": {"reason": "paused per direction vector"},
+    "voice-bridge": {"reason": "paused per direction vector"},
+    "movies": {"reason": "paused per direction vector"},
+    "blog": {"reason": "paused per direction vector"},
+}
+
 
 def _paused_path() -> Path:
     return Path(settings.artifacts_dir) / PAUSED_FILE
 
 
 def _read_state() -> dict[str, dict]:
-    """Read paused projects state. Keys are project names."""
+    """Read paused projects state. Keys are project names.
+
+    Merges DEFAULT_PAUSED with runtime JSON state.  Runtime entries take
+    precedence (so an operator can override reason/metadata), but default
+    projects are always present.
+    """
     path = _paused_path()
-    if not path.is_file():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
+    runtime: dict[str, dict] = {}
+    if path.is_file():
+        try:
+            runtime = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {**DEFAULT_PAUSED, **runtime}
 
 
 def _write_state(state: dict[str, dict]) -> None:
