@@ -23,6 +23,7 @@ import empty_backlog_detector
 import factory_idle_mode
 import meta_work_ratio
 import paused_projects
+import post_heal_verify
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -142,9 +143,15 @@ def _reconcile_backlog() -> list[str]:
         state = session.get("state", "")
         project = ticket.get("project", "unknown")
         if state == "deployed":
-            backlog.mark_completed(ticket["id"], "completed")
-            actions.append(f"ticket {ticket['id']} completed ({session_id})")
-            actions.extend(circuit_breaker.record_result(project, success=True))
+            healed = _session_was_healed(session)
+            if healed:
+                # Post-heal verification: don't trust DEPLOYED status after
+                # healer intervention — run a health check first.
+                actions.extend(_verify_healed_deploy(session, project, session_id, ticket))
+            else:
+                backlog.mark_completed(ticket["id"], "completed")
+                actions.append(f"ticket {ticket['id']} completed ({session_id})")
+                actions.extend(circuit_breaker.record_result(project, success=True))
         elif state == "completed":
             # "completed" means result.md exists but verifier didn't report DEPLOYED.
             # If the session was healed, this is suspicious — the healer may have
@@ -245,6 +252,64 @@ def _escalate_healed_unverified(session: dict, project: str, session_id: str) ->
     return [
         f"healer-verification: {project} ({session_id}) healed but deploy "
         f"unverified — escalation ticket {ticket['id']}"
+    ]
+
+
+def _verify_healed_deploy(
+    session: dict, project: str, session_id: str, ticket: dict,
+) -> list[str]:
+    """Run post-heal deploy verification before recording a healed session as success.
+
+    Even when the verifier reports DEPLOYED after healing, the deploy may be
+    broken.  Session 2247 found 2/3 healed sessions had broken deploys despite
+    DEPLOYED status.  This runs a lightweight health check and only records
+    success if it passes.
+    """
+    result = post_heal_verify.verify_deploy(project, session_id)
+    post_heal_verify.write_verification_artifact(session_id, result)
+
+    if result["status"] == "passed":
+        backlog.mark_completed(ticket["id"], "completed")
+        logger.info(
+            "Post-heal verification PASSED for %s (%s): %s",
+            session_id, project, result["reason"],
+        )
+        circuit_actions = circuit_breaker.record_result(project, success=True)
+        return [
+            f"ticket {ticket['id']} completed — heal-verified ({session_id})",
+            *circuit_actions,
+        ]
+
+    if result["status"] == "skipped":
+        # No URL configured — treat healed+deployed as unverified failure
+        # to prevent false confidence.  Projects should configure a health
+        # check URL to get credit for healed deploys.
+        backlog.mark_completed(ticket["id"], "failed")
+        logger.warning(
+            "Post-heal verification SKIPPED for %s (%s): %s — "
+            "treating as unverified failure",
+            session_id, project, result["reason"],
+        )
+        circuit_actions = circuit_breaker.record_result(project, success=False)
+        escalation = _escalate_healed_unverified(session, project, session_id)
+        return [
+            f"ticket {ticket['id']} healed-deploy-unverified ({session_id}): {result['reason']}",
+            *circuit_actions,
+            *escalation,
+        ]
+
+    # status == "failed"
+    backlog.mark_completed(ticket["id"], "failed")
+    logger.warning(
+        "Post-heal verification FAILED for %s (%s): %s",
+        session_id, project, result["reason"],
+    )
+    circuit_actions = circuit_breaker.record_result(project, success=False)
+    escalation = _escalate_healed_unverified(session, project, session_id)
+    return [
+        f"ticket {ticket['id']} healed-deploy-failed ({session_id}): {result['reason']}",
+        *circuit_actions,
+        *escalation,
     ]
 
 

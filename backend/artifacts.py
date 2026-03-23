@@ -16,6 +16,7 @@ ARTIFACT_TYPES: dict[str, str] = {
     "-verifier.json": "verifier",
     "-monitor.json": "monitor",
     "-healer.json": "healer",
+    "-heal-verified.json": "heal_verified",
     "-fixer.json": "fixer",
     "-error.json": "error",
     "-abandoned.json": "abandoned",
@@ -345,6 +346,7 @@ def list_sessions_with_timestamps() -> list[dict]:
         reviewer = info["artifacts"].get("reviewer")
         verifier = info["artifacts"].get("verifier")
         healer = info["artifacts"].get("healer")
+        heal_verified = info["artifacts"].get("heal_verified")
 
         info["summary"] = {
             "verdict": reviewer.get("verdict", "") if isinstance(reviewer, dict) else "",
@@ -354,6 +356,7 @@ def list_sessions_with_timestamps() -> list[dict]:
             "healed": healer is not None,
             "healer_action": healer.get("action", "") if isinstance(healer, dict) else "",
             "healer_diagnosis": (healer.get("diagnosis", "") if isinstance(healer, dict) else "")[:200],
+            "heal_verified": heal_verified.get("status", "") if isinstance(heal_verified, dict) else "",
         }
 
         info["artifact_types"] = list(info["artifacts"].keys())
@@ -421,7 +424,8 @@ def get_healer_effectiveness() -> dict:
     healed_sessions = [s for s in sessions if s.get("summary", {}).get("healed", False)]
     total_healed = len(healed_sessions)
 
-    deployed = 0
+    deployed_verified = 0
+    deployed_unverified = 0
     completed_unverified = 0
     failed = 0
     details: list[dict] = []
@@ -430,10 +434,15 @@ def get_healer_effectiveness() -> dict:
         summary = s.get("summary", {})
         state = s.get("state", "")
         deploy_status = summary.get("deploy_status", "")
+        heal_verify_status = summary.get("heal_verified", "")
 
         if state == "deployed" or deploy_status == "DEPLOYED":
-            category = "deployed"
-            deployed += 1
+            if heal_verify_status == "passed":
+                category = "deployed_verified"
+                deployed_verified += 1
+            else:
+                category = "deployed_unverified"
+                deployed_unverified += 1
         elif state in ("error", "rolled_back"):
             category = "failed"
             failed += 1
@@ -449,16 +458,23 @@ def get_healer_effectiveness() -> dict:
             "state": state,
             "deploy_status": deploy_status,
             "healer_action": summary.get("healer_action", ""),
+            "heal_verified": heal_verify_status,
             "category": category,
         })
 
+    # deployed_verified = truly confirmed working after healing
+    # deployed_unverified = verifier said DEPLOYED but no post-heal check passed
+    # completed_unverified = no DEPLOYED status at all
+    # false_confidence_rate = sessions that look successful but aren't verified
+    total_unverified = deployed_unverified + completed_unverified
     return {
         "total_healed": total_healed,
-        "deployed": deployed,
+        "deployed_verified": deployed_verified,
+        "deployed_unverified": deployed_unverified,
         "completed_unverified": completed_unverified,
         "failed": failed,
-        "true_success_rate": round(deployed / total_healed * 100, 1) if total_healed > 0 else 0,
-        "false_confidence_rate": round(completed_unverified / total_healed * 100, 1) if total_healed > 0 else 0,
+        "true_success_rate": round(deployed_verified / total_healed * 100, 1) if total_healed > 0 else 0,
+        "false_confidence_rate": round(total_unverified / total_healed * 100, 1) if total_healed > 0 else 0,
         "sessions": details,
     }
 
@@ -491,6 +507,7 @@ def get_factory_log(limit: int = 100) -> list[dict]:
             "-reviewer.json": ("reviewed", ""),
             "-verifier.json": ("verified", ""),
             "-healer.json": ("healed", ""),
+            "-heal-verified.json": ("heal_verified", ""),
             "-monitor.json": ("monitored", "Monitor completed"),
             "-error.json": ("error", ""),
             "-abandoned.json": ("abandoned", ""),
@@ -513,6 +530,8 @@ def get_factory_log(limit: int = 100) -> list[dict]:
                         desc += f" ({', '.join(f'{k}={v}' for k, v in stages.items())})"
                 elif data and event_type == "healed":
                     desc = f"Healer: {data.get('action', '?')} — {data.get('diagnosis', '')[:100]}"
+                elif data and event_type == "heal_verified":
+                    desc = f"Heal verify: {data.get('status', '?')} — {data.get('reason', '')[:100]}"
                 elif data and event_type == "error":
                     desc = f"Error: {data.get('error_class', '?')}"
                 elif data and event_type == "abandoned":

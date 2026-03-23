@@ -59,6 +59,7 @@ export interface HistorySession {
     healed: boolean;
     healer_action: string;
     healer_diagnosis: string;
+    heal_verified: string;
   };
 }
 
@@ -156,6 +157,7 @@ export interface LogEvent {
     | "reviewed"
     | "verified"
     | "healed"
+    | "heal_verified"
     | "monitored"
     | "completed"
     | "abandoned"
@@ -166,7 +168,8 @@ export interface LogEvent {
 // Matches /api/healer-effectiveness response
 export interface HealerEffectiveness {
   total_healed: number;
-  deployed: number;
+  deployed_verified: number;
+  deployed_unverified: number;
   completed_unverified: number;
   failed: number;
   true_success_rate: number;
@@ -177,7 +180,8 @@ export interface HealerEffectiveness {
     state: string;
     deploy_status: string;
     healer_action: string;
-    category: "deployed" | "completed_unverified" | "failed" | "other";
+    heal_verified: string;
+    category: "deployed_verified" | "deployed_unverified" | "completed_unverified" | "failed" | "other";
   }[];
 }
 
