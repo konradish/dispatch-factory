@@ -35,6 +35,7 @@ DEFAULT_PAUSED: dict[str, dict] = {
     "voice-bridge": {"reason": "paused per direction vector"},
     "movies": {"reason": "paused per direction vector"},
     "blog": {"reason": "paused per direction vector"},
+    "schoolbrain": {"reason": "experimental — not yet in dispatch rotation (per direction vector)"},
 }
 
 
