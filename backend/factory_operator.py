@@ -298,6 +298,9 @@ def _execute_action(action: dict) -> dict:
         ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
         if not ticket:
             return {"type": "dispatch", "status": "error", "detail": f"Ticket {ticket_id} not found"}
+        # Pre-dispatch guard: reject if project already has an in-flight ticket
+        if backlog.has_inflight_ticket(ticket["project"]):
+            return {"type": "dispatch", "status": "blocked", "detail": f"Project {ticket['project']} already has an in-flight ticket"}
         # Circuit breaker: block dispatches to tripped projects
         if circuit_breaker.is_project_blocked(ticket["project"]):
             return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
