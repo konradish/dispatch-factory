@@ -304,6 +304,12 @@ def _execute_action(action: dict) -> dict:
         # Circuit breaker: block dispatches to tripped projects
         if circuit_breaker.is_project_blocked(ticket["project"]):
             return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
+        # Priority inversion guard: block lower-priority dispatch when capacity is at max
+        import heartbeat as _hb
+        active = artifacts.get_active_sessions()
+        max_concurrent = _hb._state.get("max_concurrent", 3)
+        if len(active) >= max_concurrent - 1 and backlog.has_eligible_higher_priority(ticket.get("priority", "normal")):
+            return {"type": "dispatch", "status": "blocked", "detail": "Higher-priority tickets are pending; dispatch those first"}
         # Actually dispatch
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         cmd.extend(ticket.get("flags", []))
