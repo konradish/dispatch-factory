@@ -7,6 +7,7 @@ import {
   updateBacklogTicket,
   fetchSelfImprovement,
 } from "@/lib/api";
+import { validateTaskQuality, TASK_MIN_LENGTH } from "@/lib/taskQuality";
 
 // -- Constants ----------------------------------------------------------------
 
@@ -307,30 +308,37 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
       )}
 
       {/* Quick-add bar */}
-      <form onSubmit={handleCreate} className="flex items-center gap-3 shrink-0">
-        <input
-          type="text"
-          value={task}
-          onChange={(e) => setTask(e.target.value.slice(0, 500))}
-          placeholder="Quick add task..."
-          className="flex-1 bg-bg-surface border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue/50"
-        />
-        <select
-          value={project}
-          onChange={(e) => setProject(e.target.value)}
-          className="bg-bg-surface border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 mono focus:outline-none focus:border-accent-blue w-44"
-        >
-          {projects.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))}
-        </select>
-        <button
-          type="submit"
-          disabled={submitting || !task.trim()}
-          className="px-4 py-2 rounded-lg text-sm font-medium bg-accent-blue/20 text-accent-blue border border-accent-blue/30 hover:bg-accent-blue/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-        >
-          {submitting ? "Adding..." : "Add"}
-        </button>
+      <form onSubmit={handleCreate} className="flex flex-col gap-1.5 shrink-0">
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={task}
+            onChange={(e) => setTask(e.target.value.slice(0, 500))}
+            placeholder={`Quick add task (min ${TASK_MIN_LENGTH} chars, be specific)...`}
+            className="flex-1 bg-bg-surface border border-gray-700 rounded-lg px-4 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-blue focus:ring-1 focus:ring-accent-blue/50"
+          />
+          <select
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            className="bg-bg-surface border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 mono focus:outline-none focus:border-accent-blue w-44"
+          >
+            {projects.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            disabled={submitting || !task.trim() || !!validateTaskQuality(task)}
+            className="px-4 py-2 rounded-lg text-sm font-medium bg-accent-blue/20 text-accent-blue border border-accent-blue/30 hover:bg-accent-blue/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+          >
+            {submitting ? "Adding..." : "Add"}
+          </button>
+        </div>
+        {task.trim() && validateTaskQuality(task) && (
+          <div className="text-[10px] text-accent-yellow px-1">
+            {validateTaskQuality(task)}
+          </div>
+        )}
       </form>
 
       {/* Kanban board */}

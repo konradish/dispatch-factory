@@ -35,6 +35,41 @@ SESSION_ID_RE = re.compile(r"^(?:worker|deploy|validate)-[a-z][a-z0-9-]*-\d+$")
 PROJECT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only"])
 
+# Task quality gate — reject vague or underspecified tasks.
+# Vague tasks correlate with deploy failures (sessions 1822, 1824, 1609).
+TASK_MIN_LENGTH = 20
+VAGUE_TASK_PATTERNS = re.compile(
+    r"^("
+    r"test|testing|try this|check|fix|fix it|update|updates|do it"
+    r"|what are next steps\??"
+    r"|next steps\??"
+    r"|todo|tbd|placeholder|asdf|hello"
+    r"|make it work|do something|finish this"
+    r"|needs work|investigate|look into"
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _validate_task_quality(task: str) -> None:
+    """Reject tasks that are too short or vague to be actionable.
+
+    A dispatchable task must be at least 20 characters and describe
+    a concrete deliverable — not a generic verb or question.
+    """
+    if len(task) < TASK_MIN_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task too short ({len(task)} chars). "
+            f"Minimum {TASK_MIN_LENGTH} characters — describe a concrete deliverable.",
+        )
+    if VAGUE_TASK_PATTERNS.match(task.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="Task is too vague to dispatch. "
+            "Describe a concrete deliverable (e.g. 'Add retry logic to payment webhook handler').",
+        )
+
 
 def _validate_session_id(session_id: str) -> None:
     if not SESSION_ID_RE.match(session_id):
@@ -246,6 +281,7 @@ async def create_ticket(req: TicketRequest) -> dict[str, str]:
     task = req.task.strip()
     if not task or len(task) > 500:
         raise HTTPException(status_code=400, detail="Task must be 1-500 characters")
+    _validate_task_quality(task)
 
     # Validate flags against allowlist.
     for flag in req.flags:
@@ -370,6 +406,7 @@ async def create_backlog_ticket(req: BacklogTicketRequest) -> dict:
     task = req.task.strip()
     if not task or len(task) > 500:
         raise HTTPException(status_code=400, detail="Task must be 1-500 characters")
+    _validate_task_quality(task)
     for flag in req.flags:
         if flag not in ALLOWED_FLAGS:
             raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
@@ -422,6 +459,9 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
         raise HTTPException(status_code=404, detail="Ticket not found")
     if ticket["status"] not in ("pending", "ready"):
         raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
+
+    # Task quality gate: reject vague tasks before dispatch
+    _validate_task_quality(ticket["task"].strip())
 
     # Pre-dispatch guard: reject if project already has an in-flight ticket
     if backlog.has_inflight_ticket(ticket["project"]):
