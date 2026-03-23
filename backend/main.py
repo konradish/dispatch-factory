@@ -19,6 +19,7 @@ import archived_projects
 import artifacts
 import cleared_healed_sessions
 import backlog
+import paused_projects
 import circuit_breaker
 import heartbeat
 import intake
@@ -671,6 +672,81 @@ async def clear_project_healed_sessions(project: str, body: dict | None = None) 
         project, session_ids, reason=reason, source="api",
     )
     return {"status": "cleared", "project": project, "cleared": count, "session_ids": session_ids}
+
+
+@app.post("/api/cleared-healed-sessions/_batch")
+async def batch_clear_healed_sessions(body: dict | None = None) -> dict:
+    """Clear all healed-but-unverified sessions across all projects at once.
+
+    Useful for batch housekeeping — acknowledges all outstanding
+    healed_deploy_unverified alerts in a single call.
+    """
+    _require_controls()
+    reason = (body or {}).get("reason", "batch housekeeping")
+
+    sessions = artifacts.list_sessions_with_timestamps()
+    cleared_ids = cleared_healed_sessions.get_cleared_ids()
+
+    # Find all healed-unverified sessions not yet cleared
+    healed_unverified = [
+        s for s in sessions
+        if s.get("summary", {}).get("healed", False)
+        and s["state"] == "completed"
+        and s["id"] not in cleared_ids
+    ]
+
+    if not healed_unverified:
+        return {"status": "no_sessions", "cleared": 0, "projects": {}}
+
+    # Group by project and clear
+    by_project: dict[str, list[str]] = {}
+    for s in healed_unverified:
+        by_project.setdefault(s["project"], []).append(s["id"])
+
+    total = 0
+    project_results: dict[str, int] = {}
+    for project, sids in sorted(by_project.items()):
+        count = cleared_healed_sessions.clear_project_sessions(
+            project, sids, reason=reason, source="batch-api",
+        )
+        project_results[project] = count
+        total += count
+
+    return {"status": "cleared", "cleared": total, "projects": project_results}
+
+
+# ---------------------------------------------------------------------------
+# Paused projects
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/paused-projects")
+async def list_paused_projects() -> dict[str, dict]:
+    """Return all paused projects with metadata."""
+    return paused_projects.get_paused()
+
+
+@app.post("/api/paused-projects/{project}")
+async def pause_project(project: str, body: dict | None = None) -> dict[str, str]:
+    """Pause a project — suppresses neglect alerts while keeping it in health tracking."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    reason = (body or {}).get("reason", "")
+    if not paused_projects.pause_project(project, reason=reason):
+        raise HTTPException(status_code=409, detail="Project already paused")
+    return {"status": "paused", "project": project}
+
+
+@app.delete("/api/paused-projects/{project}")
+async def unpause_project(project: str) -> dict[str, str]:
+    """Unpause a project — restores neglect alert monitoring."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    if not paused_projects.unpause_project(project):
+        raise HTTPException(status_code=404, detail="Project not paused")
+    return {"status": "unpaused", "project": project}
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,11 @@ export default function ProjectHealth() {
               >
                 <td className="px-4 py-2 mono text-gray-200">
                   {entry.project}
+                  {entry.paused && (
+                    <span className="ml-1.5 text-[10px] bg-gray-600/15 text-gray-400 px-1.5 py-0.5 rounded">
+                      PAUSED
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-gray-400">
                   {formatDate(entry.last_successful_deploy)}
