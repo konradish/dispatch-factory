@@ -618,6 +618,17 @@ async def project_health_dashboard() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Healer effectiveness
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/healer-effectiveness")
+async def healer_effectiveness() -> dict:
+    """Healer effectiveness metrics: true success rate vs false confidence."""
+    return artifacts.get_healer_effectiveness()
+
+
+# ---------------------------------------------------------------------------
 # Operator — LLM-driven factory management with rotating lenses
 # ---------------------------------------------------------------------------
 

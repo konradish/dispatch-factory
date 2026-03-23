@@ -123,10 +123,25 @@ def _reconcile_backlog() -> list[str]:
 
         state = session.get("state", "")
         project = ticket.get("project", "unknown")
-        if state in ("deployed", "completed"):
+        if state == "deployed":
             backlog.mark_completed(ticket["id"], "completed")
             actions.append(f"ticket {ticket['id']} completed ({session_id})")
             actions.extend(circuit_breaker.record_result(project, success=True))
+        elif state == "completed":
+            # "completed" means result.md exists but verifier didn't report DEPLOYED.
+            # If the session was healed, this is suspicious — the healer may have
+            # skipped deploy or masked a failure.  Treat as a deploy-unverified
+            # failure to prevent false confidence.
+            healed = _session_was_healed(session)
+            if healed:
+                backlog.mark_completed(ticket["id"], "failed")
+                actions.append(f"ticket {ticket['id']} healed-but-unverified ({session_id})")
+                actions.extend(circuit_breaker.record_result(project, success=False))
+                actions.extend(_escalate_healed_unverified(session, project, session_id))
+            else:
+                backlog.mark_completed(ticket["id"], "completed")
+                actions.append(f"ticket {ticket['id']} completed ({session_id})")
+                actions.extend(circuit_breaker.record_result(project, success=True))
         elif state in ("error", "rolled_back"):
             backlog.mark_completed(ticket["id"], "failed")
             label = "rolled back" if state == "rolled_back" else "failed"
@@ -139,6 +154,57 @@ def _reconcile_backlog() -> list[str]:
             actions.extend(circuit_breaker.record_result(project, success=False))
 
     return actions
+
+
+def _session_was_healed(session: dict) -> bool:
+    """Check if a session had healer intervention."""
+    healer = session.get("artifacts", {}).get("healer")
+    return isinstance(healer, dict)
+
+
+def _escalate_healed_unverified(session: dict, project: str, session_id: str) -> list[str]:
+    """Escalate a healed session that completed without verified deploy.
+
+    When the healer intervenes and the session reaches 'completed' state
+    (has result.md) but the verifier never reported DEPLOYED, the healer
+    likely skipped or masked the deploy failure.  This creates a high-priority
+    ticket and prevents the false-success pattern seen in electricapp-2221
+    and dispatch-factory-2203.
+    """
+    healer = session.get("artifacts", {}).get("healer", {})
+    action = healer.get("action", "unknown")
+    diagnosis = healer.get("diagnosis", "")[:200]
+
+    verifier = session.get("artifacts", {}).get("verifier", {})
+    deploy_status = verifier.get("status", "unknown") if isinstance(verifier, dict) else "missing"
+    stages = verifier.get("stages", {}) if isinstance(verifier, dict) else {}
+
+    task = (
+        f"Post-heal deploy verification FAILED: {project} session {session_id} "
+        f"was healed ({action}) but deploy was never verified "
+        f"(verifier status: {deploy_status}, stages: {stages}). "
+        f"Healer diagnosis: {diagnosis}"
+    )
+
+    ticket = backlog.create_ticket(
+        task=task,
+        project=project,
+        priority="high",
+        source="healer-verification",
+    )
+
+    logger.warning(
+        "Healed-but-unverified: %s session %s completed without deploy — "
+        "created escalation ticket %s",
+        project,
+        session_id,
+        ticket["id"],
+    )
+
+    return [
+        f"healer-verification: {project} ({session_id}) healed but deploy "
+        f"unverified — escalation ticket {ticket['id']}"
+    ]
 
 
 def _check_healed_but_failed(session: dict, project: str, session_id: str) -> list[str]:

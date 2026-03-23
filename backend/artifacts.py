@@ -408,6 +408,61 @@ def get_brief() -> dict:
     }
 
 
+def get_healer_effectiveness() -> dict:
+    """Compute healer effectiveness metrics from session history.
+
+    Categorizes healed sessions into:
+    - deployed: healed AND verifier reported DEPLOYED (true success)
+    - completed_unverified: healed, has result, but no DEPLOYED status (false confidence)
+    - failed: healed but ended in error/rolled_back (known failure)
+    """
+    sessions = list_sessions_with_timestamps()
+
+    healed_sessions = [s for s in sessions if s.get("summary", {}).get("healed", False)]
+    total_healed = len(healed_sessions)
+
+    deployed = 0
+    completed_unverified = 0
+    failed = 0
+    details: list[dict] = []
+
+    for s in healed_sessions:
+        summary = s.get("summary", {})
+        state = s.get("state", "")
+        deploy_status = summary.get("deploy_status", "")
+
+        if state == "deployed" or deploy_status == "DEPLOYED":
+            category = "deployed"
+            deployed += 1
+        elif state in ("error", "rolled_back"):
+            category = "failed"
+            failed += 1
+        elif state == "completed":
+            category = "completed_unverified"
+            completed_unverified += 1
+        else:
+            category = "other"
+
+        details.append({
+            "session": s["id"],
+            "project": s["project"],
+            "state": state,
+            "deploy_status": deploy_status,
+            "healer_action": summary.get("healer_action", ""),
+            "category": category,
+        })
+
+    return {
+        "total_healed": total_healed,
+        "deployed": deployed,
+        "completed_unverified": completed_unverified,
+        "failed": failed,
+        "true_success_rate": round(deployed / total_healed * 100, 1) if total_healed > 0 else 0,
+        "false_confidence_rate": round(completed_unverified / total_healed * 100, 1) if total_healed > 0 else 0,
+        "sessions": details,
+    }
+
+
 def get_factory_log(limit: int = 100) -> list[dict]:
     """Build a timeline of factory events from artifact files."""
     artifacts_dir = _artifacts_path()

@@ -163,6 +163,24 @@ export interface LogEvent {
   description: string;
 }
 
+// Matches /api/healer-effectiveness response
+export interface HealerEffectiveness {
+  total_healed: number;
+  deployed: number;
+  completed_unverified: number;
+  failed: number;
+  true_success_rate: number;
+  false_confidence_rate: number;
+  sessions: {
+    session: string;
+    project: string;
+    state: string;
+    deploy_status: string;
+    healer_action: string;
+    category: "deployed" | "completed_unverified" | "failed" | "other";
+  }[];
+}
+
 // Matches /api/project-health response
 export interface ProjectHealthEntry {
   project: string;
