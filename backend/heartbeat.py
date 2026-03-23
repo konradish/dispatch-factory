@@ -68,10 +68,13 @@ def _beat() -> list[str]:
     """Single heartbeat tick. Returns list of actions taken."""
     actions: list[str] = []
 
-    # 1. Reconcile backlog with completed sessions
+    # 1. Garbage-collect zombie sessions (running state, no active worker)
+    actions.extend(_gc_zombie_sessions())
+
+    # 2. Reconcile backlog with completed sessions (includes abandoned)
     actions.extend(_reconcile_backlog())
 
-    # 2. Check for stuck workers
+    # 3. Check for stuck workers
     actions.extend(_check_stuck_workers())
 
     # 3. Run operator (LLM reasoning with rotating lens)
@@ -115,6 +118,9 @@ def _reconcile_backlog() -> list[str]:
         elif state == "rolled_back":
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} rolled back ({session_id})")
+        elif state == "abandoned":
+            backlog.mark_completed(ticket["id"], "failed")
+            actions.append(f"ticket {ticket['id']} abandoned ({session_id})")
 
     return actions
 
@@ -140,6 +146,48 @@ def _check_stuck_workers() -> list[str]:
                     actions.append(f"stuck: {sid} (no artifacts, log idle {int(age_minutes)}min)")
             except OSError:
                 pass
+
+    return actions
+
+
+# Minimum age (minutes) before a session with no active worker is considered a zombie.
+ZOMBIE_THRESHOLD_MINUTES = 30
+
+
+def _gc_zombie_sessions() -> list[str]:
+    """Detect and mark zombie sessions — running state with no active tmux worker.
+
+    A zombie is a session whose most recent artifact hasn't been updated in
+    ZOMBIE_THRESHOLD_MINUTES and whose tmux pane is either gone or dropped
+    back to a bare shell.
+    """
+    actions: list[str] = []
+    active_ids = {s["id"] for s in artifacts.get_active_sessions()}
+    all_sessions = artifacts.list_sessions()
+
+    for session in all_sessions:
+        sid = session["id"]
+        if session["state"] != "running":
+            continue
+        if sid in active_ids:
+            continue  # Worker is still alive
+
+        # Check age — only GC if log file is old enough
+        log_path = artifacts._artifacts_path() / f"{sid}.log"
+        if not log_path.is_file():
+            continue
+        try:
+            age_minutes = (time.time() - log_path.stat().st_mtime) / 60
+        except OSError:
+            continue
+
+        if age_minutes < ZOMBIE_THRESHOLD_MINUTES:
+            continue
+
+        # Mark as abandoned
+        if artifacts.abandon_session(sid, reason=f"no active worker, idle {int(age_minutes)}min"):
+            actions.append(f"gc: abandoned {sid} (idle {int(age_minutes)}min)")
+            logger.info("GC abandoned zombie session %s (idle %dmin)", sid, int(age_minutes))
 
     return actions
 
