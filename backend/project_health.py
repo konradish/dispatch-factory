@@ -9,6 +9,7 @@ Tracks:
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -18,6 +19,8 @@ import circuit_breaker
 import cleared_healed_sessions
 import empty_backlog_detector
 import paused_projects
+
+logger = logging.getLogger("dispatch-factory.project-health")
 
 
 def _days_ago(timestamp: float) -> float:
@@ -63,6 +66,9 @@ def get_project_health() -> list[dict]:
 
     # Read cleared healed-session IDs once (not per-project)
     cleared_ids = cleared_healed_sessions.get_cleared_ids()
+    logger.debug(
+        "Health check: loaded %d cleared healed-session IDs", len(cleared_ids),
+    )
 
     results = []
     for project in sorted(by_project):
@@ -116,6 +122,14 @@ def get_project_health() -> list[dict]:
             alerts.append("pr_backlog")
         if healed_unverified:
             alerts.append("healed_deploy_unverified")
+            logger.warning(
+                "healed_deploy_unverified alert for %s: %d sessions "
+                "not in cleared registry (session_ids=%s, cleared_ids_count=%d)",
+                project,
+                len(healed_unverified),
+                [s["id"] for s in healed_unverified],
+                len(cleared_ids),
+            )
 
         # Empty backlog: project needs human direction but has no pending tickets
         if project in empty_backlog_projects:

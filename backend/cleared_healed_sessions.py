@@ -35,16 +35,23 @@ def _read_state() -> dict[str, dict]:
     """Read cleared sessions state. Keys are session IDs."""
     path = _cleared_path()
     if not path.is_file():
+        logger.debug("Cleared sessions file not found: %s", path)
         return {}
     try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        state = json.loads(path.read_text())
+        logger.debug(
+            "Read %d cleared sessions from %s", len(state), path,
+        )
+        return state
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Failed to read cleared sessions from %s: %s", path, exc)
         return {}
 
 
 def _write_state(state: dict[str, dict]) -> None:
     path = _cleared_path()
     path.write_text(json.dumps(state, indent=2))
+    logger.debug("Wrote %d cleared sessions to %s", len(state), path)
 
 
 def is_cleared(session_id: str) -> bool:
@@ -66,6 +73,7 @@ def clear_session(session_id: str, reason: str = "", source: str = "manual") -> 
     """Mark a healed session as cleared/acknowledged. Returns False if already cleared."""
     state = _read_state()
     if session_id in state:
+        logger.debug("Session %s already in cleared registry (source=%s)", session_id, source)
         return False
     state[session_id] = {
         "cleared_at": time.time(),
@@ -74,6 +82,14 @@ def clear_session(session_id: str, reason: str = "", source: str = "manual") -> 
     }
     _write_state(state)
     logger.info("Cleared healed session %s: %s (source=%s)", session_id, reason, source)
+    # Verify write-back: re-read to confirm persistence
+    verify = _read_state()
+    if session_id not in verify:
+        logger.error(
+            "WRITE-BACK FAILED: session %s was written but not found on "
+            "re-read — file may be overwritten by concurrent process",
+            session_id,
+        )
     return True
 
 

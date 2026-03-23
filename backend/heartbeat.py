@@ -202,11 +202,25 @@ def _escalate_healed_unverified(session: dict, project: str, session_id: str) ->
     # Auto-clear the session from the health dashboard alert now that an
     # escalation ticket exists.  Without this, the healed_deploy_unverified
     # alert accumulates across all projects forever, diluting its signal.
-    cleared_healed_sessions.clear_session(
+    was_cleared = cleared_healed_sessions.clear_session(
         session_id,
         reason=f"auto-cleared after escalation ticket {ticket['id']}",
         source="heartbeat",
     )
+    if was_cleared:
+        logger.info(
+            "Auto-cleared healed session %s for %s (ticket %s) — "
+            "verifying write-back to %s",
+            session_id, project, ticket["id"],
+            cleared_healed_sessions.CLEARED_FILE,
+        )
+    else:
+        logger.warning(
+            "Session %s was already cleared — alert should not have fired "
+            "for %s. Possible read/write inconsistency in %s",
+            session_id, project,
+            cleared_healed_sessions.CLEARED_FILE,
+        )
 
     logger.warning(
         "Healed-but-unverified: %s session %s completed without deploy — "
