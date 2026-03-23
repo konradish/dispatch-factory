@@ -458,6 +458,29 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
 
 
+@app.post("/api/sessions/gc")
+async def run_session_gc() -> dict:
+    """Manually trigger session garbage collection for zombie workers."""
+    _require_controls()
+    actions = heartbeat._gc_zombie_sessions()
+    return {"actions": actions, "count": len(actions)}
+
+
+@app.post("/api/sessions/{session_id}/abandon")
+async def abandon_session(session_id: str) -> dict[str, str]:
+    """Manually mark a session as abandoned."""
+    _require_controls()
+    _validate_session_id(session_id)
+    session = artifacts.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session["state"] == "abandoned":
+        return {"status": "already_abandoned"}
+    if not artifacts.abandon_session(session_id, reason="manually abandoned"):
+        raise HTTPException(status_code=409, detail="Could not abandon session")
+    return {"status": "abandoned"}
+
+
 # ---------------------------------------------------------------------------
 # Operator — LLM-driven factory management with rotating lenses
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ export interface SessionSummary {
   id: string;
   project: string;
   type: "worker" | "deploy" | "validate";
-  state: string; // running, planning, reviewing, verifying, monitoring, completed, deployed, rolled_back, error
+  state: string; // running, planning, reviewing, verifying, monitoring, completed, deployed, rolled_back, error, abandoned
   task: string;
   artifact_types: string[];
   has_log: boolean;
@@ -148,6 +148,7 @@ export interface LogEvent {
     | "healed"
     | "monitored"
     | "completed"
+    | "abandoned"
     | "error";
   description: string;
 }

@@ -34,6 +34,7 @@ function StateBadge({ state }: { state: string }) {
     deployed: "bg-accent-green/15 text-accent-green",
     rolled_back: "bg-accent-red/15 text-accent-red",
     error: "bg-accent-red/15 text-accent-red",
+    abandoned: "bg-accent-yellow/15 text-accent-yellow",
   };
   const c = colors[state] ?? "bg-gray-500/15 text-gray-400";
   return (
@@ -294,6 +295,10 @@ function VerdictBanner({ artifacts, state }: { artifacts: Record<string, unknown
     message = "Failed with error";
     bgClass = "bg-accent-red/10 border-accent-red/30 text-accent-red";
     icon = "✕";
+  } else if (state === "abandoned") {
+    message = "Abandoned — no active worker";
+    bgClass = "bg-accent-yellow/10 border-accent-yellow/30 text-accent-yellow";
+    icon = "⊘";
   } else if (verdict === "APPROVE" && !verifier) {
     message = "Reviewed and approved — not yet verified/deployed";
     bgClass = "bg-accent-cyan/10 border-accent-cyan/30 text-accent-cyan";
