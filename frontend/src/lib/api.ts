@@ -10,6 +10,7 @@ import type {
   BacklogTicket,
   HeartbeatState,
   SelfImprovementState,
+  ProjectHealthEntry,
   PipelineSummary,
   PipelineStageDetail,
 } from "@/types";
@@ -190,4 +191,10 @@ export function fetchPipelineStage(
   id: string
 ): Promise<ApiResult<PipelineStageDetail>> {
   return request<PipelineStageDetail>(`/api/pipeline/stages/${id}`);
+}
+
+export function fetchProjectHealth(): Promise<
+  ApiResult<ProjectHealthEntry[]>
+> {
+  return request<ProjectHealthEntry[]>("/api/project-health");
 }

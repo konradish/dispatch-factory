@@ -162,3 +162,17 @@ export interface LogEvent {
     | "error";
   description: string;
 }
+
+// Matches /api/project-health response
+export interface ProjectHealthEntry {
+  project: string;
+  last_successful_deploy: string | null;
+  days_since_last_deploy: number | null;
+  consecutive_deploy_failures: number;
+  circuit_breaker_tripped: boolean;
+  days_since_last_dispatch: number | null;
+  last_dispatch_date: string | null;
+  open_prs: number | null;
+  total_sessions: number;
+  alerts: string[];
+}
