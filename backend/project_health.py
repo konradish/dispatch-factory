@@ -23,20 +23,6 @@ import paused_projects
 logger = logging.getLogger("dispatch-factory.project-health")
 
 
-def _session_lacks_deploy_verification(session: dict) -> bool:
-    """Return True if a healed session has no evidence of successful deploy.
-
-    A session with a verifier artifact reporting DEPLOYED status has been
-    verified — the heal did not skip the deploy.  Only sessions where the
-    verifier is missing or reports a non-DEPLOYED status truly lack
-    deploy verification.
-    """
-    verifier = session.get("artifacts", {}).get("verifier")
-    if not isinstance(verifier, dict):
-        return True  # no verifier at all
-    return verifier.get("status") != "DEPLOYED"
-
-
 def _days_ago(timestamp: float) -> float:
     """Return how many days ago a Unix timestamp was."""
     return (time.time() - timestamp) / 86400
@@ -136,7 +122,6 @@ def get_project_health() -> list[dict]:
                 if s.get("summary", {}).get("healed", False)
                 and s["state"] == "completed"
                 and s["id"] not in cleared_ids
-                and _session_lacks_deploy_verification(s)
             ]
             if healed_unverified:
                 alerts.append("healed_deploy_unverified")
