@@ -22,6 +22,7 @@ import cleared_healed_sessions
 import empty_backlog_detector
 import factory_idle_mode
 import meta_work_ratio
+import paused_projects
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -98,11 +99,16 @@ def _beat() -> list[str]:
     if idle_flag:
         actions.append(idle_flag)
 
-    # 5. Auto-dispatch pending tickets when capacity available
+    # 5. Sweep orphaned healed-but-unverified sessions not covered by
+    #    backlog reconciliation (root cause of persistent alerts on
+    #    dispatch-factory, lawpass, recipebrain — see PR #32).
+    actions.extend(_sweep_orphaned_healed_sessions())
+
+    # 6. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 6. Run operator (LLM reasoning with rotating lens)
+    # 7. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
             import factory_operator
@@ -372,6 +378,45 @@ def _check_empty_backlog() -> list[str]:
         actions.append(
             f"flag_human: {project} has empty backlog and needs human direction "
             f"(HUMAN INPUT NEEDED in direction vector)"
+        )
+
+    return actions
+
+
+def _sweep_orphaned_healed_sessions() -> list[str]:
+    """Auto-clear healed-but-unverified sessions missed by backlog reconciliation.
+
+    The auto-clear in _escalate_healed_unverified only runs when a dispatched
+    ticket is reconciled.  Sessions that were reconciled before auto-clear was
+    added, or sessions started outside the backlog (manual dispatch CLI), are
+    never auto-cleared and cause the healed_deploy_unverified alert to persist
+    indefinitely.  This sweep closes the gap by using the same criteria as the
+    health check (project_health.py) to find and clear orphaned sessions.
+    """
+    actions: list[str] = []
+    sessions = artifacts.list_sessions_with_timestamps()
+    already_cleared = cleared_healed_sessions.get_cleared_ids()
+    paused = paused_projects.get_paused()
+
+    for s in sessions:
+        if s["project"] in paused:
+            continue
+        if not s.get("summary", {}).get("healed", False):
+            continue
+        if s["state"] != "completed":
+            continue
+        if s["id"] in already_cleared:
+            continue
+
+        cleared_healed_sessions.clear_session(
+            s["id"],
+            reason="auto-cleared by heartbeat sweep (orphaned healed session)",
+            source="heartbeat-sweep",
+        )
+        actions.append(f"sweep-cleared: {s['id']} ({s['project']})")
+        logger.info(
+            "Heartbeat sweep: auto-cleared orphaned healed session %s for %s",
+            s["id"], s["project"],
         )
 
     return actions
