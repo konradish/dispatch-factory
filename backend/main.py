@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 import archived_projects
 import artifacts
+import cleared_healed_sessions
 import backlog
 import circuit_breaker
 import heartbeat
@@ -626,6 +627,49 @@ async def project_health_dashboard() -> list[dict]:
 async def healer_effectiveness() -> dict:
     """Healer effectiveness metrics: true success rate vs false confidence."""
     return artifacts.get_healer_effectiveness()
+
+
+# ---------------------------------------------------------------------------
+# Cleared healed sessions
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/cleared-healed-sessions")
+async def list_cleared_healed_sessions() -> dict[str, dict]:
+    """Return all cleared healed sessions with metadata."""
+    return cleared_healed_sessions.get_cleared()
+
+
+@app.post("/api/cleared-healed-sessions/{project}")
+async def clear_project_healed_sessions(project: str, body: dict | None = None) -> dict:
+    """Clear all healed-but-unverified sessions for a project.
+
+    Finds healed+completed sessions for the project and marks them as
+    reviewed/acknowledged so the healed_deploy_unverified alert stops firing.
+    """
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+
+    reason = (body or {}).get("reason", "manually cleared")
+
+    # Find healed-unverified sessions for this project
+    sessions = artifacts.list_sessions_with_timestamps()
+    healed_unverified = [
+        s for s in sessions
+        if s["project"] == project
+        and s.get("summary", {}).get("healed", False)
+        and s["state"] == "completed"
+    ]
+    session_ids = [s["id"] for s in healed_unverified]
+
+    if not session_ids:
+        return {"status": "no_sessions", "project": project, "cleared": 0}
+
+    count = cleared_healed_sessions.clear_project_sessions(
+        project, session_ids, reason=reason, source="api",
+    )
+    return {"status": "cleared", "project": project, "cleared": count, "session_ids": session_ids}
 
 
 # ---------------------------------------------------------------------------

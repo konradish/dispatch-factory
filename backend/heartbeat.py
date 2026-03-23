@@ -18,6 +18,7 @@ import time
 import artifacts
 import backlog
 import circuit_breaker
+import cleared_healed_sessions
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -191,6 +192,15 @@ def _escalate_healed_unverified(session: dict, project: str, session_id: str) ->
         project=project,
         priority="high",
         source="healer-verification",
+    )
+
+    # Auto-clear the session from the health dashboard alert now that an
+    # escalation ticket exists.  Without this, the healed_deploy_unverified
+    # alert accumulates across all projects forever, diluting its signal.
+    cleared_healed_sessions.clear_session(
+        session_id,
+        reason=f"auto-cleared after escalation ticket {ticket['id']}",
+        source="heartbeat",
     )
 
     logger.warning(
