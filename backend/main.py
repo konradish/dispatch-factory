@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import archived_projects
 import artifacts
 import backlog
 import circuit_breaker
@@ -567,6 +568,40 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
     if not circuit_breaker.reset_project(project):
         raise HTTPException(status_code=404, detail="Project not found in circuit breaker state")
     return {"status": "reset", "project": project}
+
+
+# ---------------------------------------------------------------------------
+# Archived projects
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/archived-projects")
+async def list_archived_projects() -> dict[str, dict]:
+    """Return all archived projects with metadata."""
+    return archived_projects.get_archived()
+
+
+@app.post("/api/archived-projects/{project}")
+async def archive_project(project: str, body: dict | None = None) -> dict[str, str]:
+    """Archive a project — removes it from dispatch rotation and health checks."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    reason = (body or {}).get("reason", "")
+    if not archived_projects.archive_project(project, reason=reason):
+        raise HTTPException(status_code=409, detail="Project already archived")
+    return {"status": "archived", "project": project}
+
+
+@app.delete("/api/archived-projects/{project}")
+async def unarchive_project(project: str) -> dict[str, str]:
+    """Unarchive a project — restores it to dispatch rotation."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    if not archived_projects.unarchive_project(project):
+        raise HTTPException(status_code=404, detail="Project not archived")
+    return {"status": "unarchived", "project": project}
 
 
 # ---------------------------------------------------------------------------

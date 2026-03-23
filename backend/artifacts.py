@@ -248,7 +248,9 @@ def abandon_session(session_id: str, reason: str = "no active worker") -> bool:
 
 
 def get_known_projects() -> list[str]:
-    """Discover projects from artifacts + dispatch --projects."""
+    """Discover projects from artifacts + dispatch --projects, excluding archived."""
+    import archived_projects
+
     projects: set[str] = set()
 
     # From artifacts
@@ -275,6 +277,10 @@ def get_known_projects() -> list[str]:
                     projects.add(line)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
+
+    # Filter out archived projects
+    archived = archived_projects.get_archived()
+    projects -= set(archived)
 
     return sorted(projects)
 

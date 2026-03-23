@@ -40,8 +40,8 @@ def _count_open_prs(project: str) -> int | None:
 
 
 def get_project_health() -> list[dict]:
-    """Compute health metrics for all known projects."""
-    projects = artifacts.get_known_projects()
+    """Compute health metrics for all known projects (excludes archived)."""
+    projects = artifacts.get_known_projects()  # already filters archived
     sessions = artifacts.list_sessions_with_timestamps()
     cb_state = circuit_breaker.get_state()
 
