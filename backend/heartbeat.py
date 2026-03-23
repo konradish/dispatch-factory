@@ -276,6 +276,15 @@ def _auto_dispatch() -> list[str]:
             actions.append(f"circuit-breaker blocked dispatch for {ticket['id']} ({ticket['project']})")
             continue
 
+        # Self-improvement ratio: block product dispatches when factory maintenance is due
+        import self_improvement
+        if self_improvement.should_block_dispatch(ticket["project"]):
+            actions.append(
+                f"self-improvement ratio blocked {ticket['id']} ({ticket['project']}) "
+                "— next dispatch must be a dispatch-factory ticket"
+            )
+            continue
+
         # Dispatch via CLI
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         cmd.extend(ticket.get("flags", []))
