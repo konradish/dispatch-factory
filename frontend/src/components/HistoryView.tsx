@@ -76,6 +76,13 @@ function ResultBadge({ session }: { session: HistorySession }) {
       </span>
     );
   }
+  if (state === "abandoned") {
+    return (
+      <span className="text-accent-yellow" title="Abandoned">
+        &#8856;
+      </span>
+    );
+  }
   if (state === "completed") {
     return (
       <span className="text-gray-500" title="Completed">

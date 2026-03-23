@@ -19,6 +19,7 @@ const STATE_LABELS: Record<string, { label: string; color: string }> = {
   deployed: { label: "Deployed", color: "bg-accent-green" },
   rolled_back: { label: "Rolled Back", color: "bg-accent-red" },
   error: { label: "Error", color: "bg-accent-red" },
+  abandoned: { label: "Abandoned", color: "bg-accent-yellow" },
 };
 
 // Generate a consistent color from project name
