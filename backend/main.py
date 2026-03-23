@@ -19,6 +19,7 @@ import archived_projects
 import artifacts
 import cleared_healed_sessions
 import backlog
+import empty_backlog_detector
 import paused_projects
 import circuit_breaker
 import heartbeat
@@ -747,6 +748,31 @@ async def unpause_project(project: str) -> dict[str, str]:
     if not paused_projects.unpause_project(project):
         raise HTTPException(status_code=404, detail="Project not paused")
     return {"status": "unpaused", "project": project}
+
+
+# ---------------------------------------------------------------------------
+# Empty backlog detection
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/empty-backlog")
+async def empty_backlog_state() -> dict:
+    """Projects with empty backlogs that need human direction."""
+    return {
+        "flagged": empty_backlog_detector.detect(),
+        "flags": empty_backlog_detector.get_state(),
+    }
+
+
+@app.delete("/api/empty-backlog/{project}")
+async def clear_empty_backlog_flag(project: str) -> dict[str, str]:
+    """Clear the empty-backlog flag for a project."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    if not empty_backlog_detector.clear_flag(project):
+        raise HTTPException(status_code=404, detail="No flag for this project")
+    return {"status": "cleared", "project": project}
 
 
 # ---------------------------------------------------------------------------

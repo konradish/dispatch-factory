@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import artifacts
 import circuit_breaker
 import cleared_healed_sessions
+import empty_backlog_detector
 import paused_projects
 
 
@@ -56,6 +57,9 @@ def get_project_health() -> list[dict]:
         by_project[p].append(s)
 
     paused = paused_projects.get_paused()
+
+    # Projects flagged for empty backlog + HUMAN INPUT NEEDED
+    empty_backlog_projects = {e["project"] for e in empty_backlog_detector.detect()}
 
     results = []
     for project in sorted(by_project):
@@ -110,6 +114,10 @@ def get_project_health() -> list[dict]:
             alerts.append("pr_backlog")
         if healed_unverified:
             alerts.append("healed_deploy_unverified")
+
+        # Empty backlog: project needs human direction but has no pending tickets
+        if project in empty_backlog_projects:
+            alerts.append("empty_backlog")
 
         results.append({
             "project": project,

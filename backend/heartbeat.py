@@ -19,6 +19,7 @@ import artifacts
 import backlog
 import circuit_breaker
 import cleared_healed_sessions
+import empty_backlog_detector
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -87,11 +88,14 @@ def _beat() -> list[str]:
     # 3. Check for stuck workers
     actions.extend(_check_stuck_workers())
 
-    # 4. Auto-dispatch pending tickets when capacity available
+    # 4. Check for empty backlog with projects needing human direction
+    actions.extend(_check_empty_backlog())
+
+    # 5. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 5. Run operator (LLM reasoning with rotating lens)
+    # 6. Run operator (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
             import factory_operator
@@ -318,6 +322,36 @@ def _gc_zombie_sessions() -> list[str]:
         if artifacts.abandon_session(sid, reason=f"no active worker, idle {int(age_minutes)}min"):
             actions.append(f"gc: abandoned {sid} (idle {int(age_minutes)}min)")
             logger.info("GC abandoned zombie session %s (idle %dmin)", sid, int(age_minutes))
+
+    return actions
+
+
+def _check_empty_backlog() -> list[str]:
+    """Detect projects with empty backlogs that need human direction.
+
+    When pending tickets reach 0 for a project and the direction vector
+    contains 'HUMAN INPUT NEEDED', escalate a flag_human reminder every
+    24 hours until direction is provided.  The factory should not silently
+    idle on product work.
+    """
+    actions: list[str] = []
+    flaggable = empty_backlog_detector.detect()
+
+    for entry in flaggable:
+        if not entry["should_flag"]:
+            continue
+
+        project = entry["project"]
+        empty_backlog_detector.record_flag(project)
+        logger.warning(
+            "Empty backlog + HUMAN INPUT NEEDED: %s has no pending tickets "
+            "and direction vector requests human input — flagging operator",
+            project,
+        )
+        actions.append(
+            f"flag_human: {project} has empty backlog and needs human direction "
+            f"(HUMAN INPUT NEEDED in direction vector)"
+        )
 
     return actions
 
