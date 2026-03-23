@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 import artifacts
 import backlog
+import circuit_breaker
 import heartbeat
 import intake
 import factory_operator
@@ -422,6 +423,13 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     if ticket["status"] not in ("pending", "ready"):
         raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
 
+    # Circuit breaker: block dispatches to tripped projects
+    if circuit_breaker.is_project_blocked(ticket["project"]):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Circuit breaker tripped for {ticket['project']} — fix deploy pipeline first",
+        )
+
     cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
     cmd.extend(ticket.get("flags", []))
 
@@ -455,6 +463,8 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     _require_controls()
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
+    from config import update_heartbeat_config
+    update_heartbeat_config(auto_dispatch=enabled, max_concurrent=max_concurrent)
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
 
 
@@ -479,6 +489,27 @@ async def abandon_session(session_id: str) -> dict[str, str]:
     if not artifacts.abandon_session(session_id, reason="manually abandoned"):
         raise HTTPException(status_code=409, detail="Could not abandon session")
     return {"status": "abandoned"}
+
+
+# ---------------------------------------------------------------------------
+# Circuit breaker
+# ---------------------------------------------------------------------------
+
+@app.get("/api/circuit-breaker")
+async def circuit_breaker_state() -> dict[str, dict]:
+    """Return circuit breaker state for all projects."""
+    return circuit_breaker.get_state()
+
+
+@app.post("/api/circuit-breaker/{project}/reset")
+async def reset_circuit_breaker(project: str) -> dict[str, str]:
+    """Manually reset the circuit breaker for a project."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    if not circuit_breaker.reset_project(project):
+        raise HTTPException(status_code=404, detail="Project not found in circuit breaker state")
+    return {"status": "reset", "project": project}
 
 
 # ---------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from pathlib import Path
 
 import artifacts
 import backlog
+import circuit_breaker
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.operator")
@@ -282,6 +283,9 @@ def _execute_action(action: dict) -> dict:
         ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
         if not ticket:
             return {"type": "dispatch", "status": "error", "detail": f"Ticket {ticket_id} not found"}
+        # Circuit breaker: block dispatches to tripped projects
+        if circuit_breaker.is_project_blocked(ticket["project"]):
+            return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
         # Actually dispatch
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         cmd.extend(ticket.get("flags", []))
