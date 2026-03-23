@@ -5,12 +5,13 @@ import BacklogView from "@/components/BacklogView";
 import HistoryView from "@/components/HistoryView";
 import FactoryLog from "@/components/FactoryLog";
 import PipelineDefinition from "@/components/PipelineDefinition";
+import ProjectHealth from "@/components/ProjectHealth";
 import TerminalPanel from "@/components/TerminalPanel";
 import SessionDetail from "@/components/SessionDetail";
 import HeartbeatIndicator from "@/components/HeartbeatIndicator";
 import type { TerminalTab } from "@/components/TerminalPanel";
 import { attachTerminal } from "@/lib/api";
-type Tab = "pipeline" | "create" | "backlog" | "history" | "log" | "pipeline-def";
+type Tab = "pipeline" | "create" | "backlog" | "history" | "log" | "health" | "pipeline-def";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>("pipeline");
@@ -138,6 +139,16 @@ export default function App() {
               Factory Log
             </button>
             <button
+              onClick={() => setActiveTab("health")}
+              className={`px-4 py-1.5 text-sm rounded transition-colors ${
+                activeTab === "health"
+                  ? "bg-bg-surface-alt text-gray-200"
+                  : "text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Health
+            </button>
+            <button
               onClick={() => setActiveTab("pipeline-def")}
               className={`px-4 py-1.5 text-sm rounded transition-colors ${
                 activeTab === "pipeline-def"
@@ -176,6 +187,7 @@ export default function App() {
         )}
         {activeTab === "history" && <HistoryView onSelectSession={setSelectedSession} />}
         {activeTab === "log" && <FactoryLog onSelectSession={setSelectedSession} />}
+        {activeTab === "health" && <ProjectHealth />}
         {activeTab === "pipeline-def" && <PipelineDefinition />}
       </main>
 

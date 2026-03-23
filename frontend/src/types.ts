@@ -105,6 +105,16 @@ export interface HeartbeatState {
   uptime_seconds: number;
 }
 
+// Matches /api/self-improvement response
+export interface SelfImprovementState {
+  product_dispatches_since_last_self_improvement: number;
+  total_product_dispatches: number;
+  total_self_improvement_dispatches: number;
+  self_improvement_due: boolean;
+  last_self_improvement_at: number | null;
+  last_updated: number;
+}
+
 // Matches /api/pipeline/summary response
 export interface PipelineStageSummary {
   id: string;
@@ -151,4 +161,18 @@ export interface LogEvent {
     | "abandoned"
     | "error";
   description: string;
+}
+
+// Matches /api/project-health response
+export interface ProjectHealthEntry {
+  project: string;
+  last_successful_deploy: string | null;
+  days_since_last_deploy: number | null;
+  consecutive_deploy_failures: number;
+  circuit_breaker_tripped: boolean;
+  days_since_last_dispatch: number | null;
+  last_dispatch_date: string | null;
+  open_prs: number | null;
+  total_sessions: number;
+  alerts: string[];
 }

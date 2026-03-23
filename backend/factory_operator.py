@@ -119,6 +119,15 @@ def _build_state_snapshot() -> str:
     brief = artifacts.get_brief()
     stats = brief.get("stats", {})
 
+    # Project health
+    import project_health as _ph
+    health = _ph.get_project_health()
+    health_json = json.dumps(health, indent=2)
+    neglected_names = [h["project"] for h in health if "neglected" in h.get("alerts", [])]
+    broken_names = [h["project"] for h in health if "deploy_broken" in h.get("alerts", [])]
+    neglected_line = ("Neglected projects (>7 days idle): " + ", ".join(neglected_names)) if neglected_names else "No neglected projects."
+    broken_line = ("Deploy-broken projects: " + ", ".join(broken_names)) if broken_names else "No deploy-broken projects."
+
     return f"""## Factory State Snapshot
 
 ### Active Workers ({len(active)})
@@ -136,6 +145,12 @@ In-flight: {len(dispatched)} tickets
 
 ### Aggregate Stats
 {json.dumps(stats, indent=2)}
+
+### Project Health
+{health_json}
+
+{neglected_line}
+{broken_line}
 
 ### Direction Vector
 {direction}

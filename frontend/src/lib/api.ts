@@ -9,6 +9,8 @@ import type {
   LogEvent,
   BacklogTicket,
   HeartbeatState,
+  SelfImprovementState,
+  ProjectHealthEntry,
   PipelineSummary,
   PipelineStageDetail,
 } from "@/types";
@@ -177,6 +179,10 @@ export function toggleAutoDispatch(
   );
 }
 
+export function fetchSelfImprovement(): Promise<ApiResult<SelfImprovementState>> {
+  return request<SelfImprovementState>("/api/self-improvement");
+}
+
 export function fetchPipelineSummary(): Promise<ApiResult<PipelineSummary>> {
   return request<PipelineSummary>("/api/pipeline/summary");
 }
@@ -185,4 +191,10 @@ export function fetchPipelineStage(
   id: string
 ): Promise<ApiResult<PipelineStageDetail>> {
   return request<PipelineStageDetail>(`/api/pipeline/stages/${id}`);
+}
+
+export function fetchProjectHealth(): Promise<
+  ApiResult<ProjectHealthEntry[]>
+> {
+  return request<ProjectHealthEntry[]>("/api/project-health");
 }

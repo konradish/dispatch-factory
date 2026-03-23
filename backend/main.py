@@ -513,6 +513,19 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Project health
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/project-health")
+async def project_health_dashboard() -> list[dict]:
+    """Per-project health metrics: deploys, failures, activity, open PRs."""
+    import project_health as _ph
+
+    return _ph.get_project_health()
+
+
+# ---------------------------------------------------------------------------
 # Operator — LLM-driven factory management with rotating lenses
 # ---------------------------------------------------------------------------
 

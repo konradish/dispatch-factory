@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { BacklogTicket } from "@/types";
+import type { BacklogTicket, SelfImprovementState } from "@/types";
 import {
   fetchBacklog,
   createBacklogTicket,
   dispatchBacklogTicket,
   updateBacklogTicket,
+  fetchSelfImprovement,
 } from "@/lib/api";
 
 // -- Constants ----------------------------------------------------------------
@@ -99,6 +100,7 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [doneExpanded, setDoneExpanded] = useState(false);
+  const [selfImprovement, setSelfImprovement] = useState<SelfImprovementState | null>(null);
 
   // Quick-add form
   const [task, setTask] = useState("");
@@ -123,6 +125,8 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
       setError(null);
     }
     setLoading(false);
+    const siResult = await fetchSelfImprovement();
+    if (siResult.data) setSelfImprovement(siResult.data);
   }, []);
 
   useEffect(() => {
@@ -276,6 +280,29 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
       {error && (
         <div className="bg-accent-red/10 border border-accent-red/30 rounded-lg px-4 py-2 text-sm text-accent-red shrink-0">
           {error}
+        </div>
+      )}
+
+      {/* Self-improvement ratio indicator */}
+      {selfImprovement && (
+        <div
+          className={`flex items-center gap-3 px-4 py-2 rounded-lg text-xs shrink-0 ${
+            selfImprovement.self_improvement_due
+              ? "bg-accent-yellow/10 border border-accent-yellow/30 text-accent-yellow"
+              : "bg-bg-surface border border-gray-800 text-gray-500"
+          }`}
+        >
+          <span className="mono font-semibold">
+            {selfImprovement.product_dispatches_since_last_self_improvement}/8
+          </span>
+          <span>
+            {selfImprovement.self_improvement_due
+              ? "Factory self-improvement due — next dispatch must be a dispatch-factory ticket"
+              : "product dispatches until factory self-improvement"}
+          </span>
+          <span className="ml-auto text-[10px] text-gray-600 mono">
+            factory: {selfImprovement.total_self_improvement_dispatches} | product: {selfImprovement.total_product_dispatches}
+          </span>
         </div>
       )}
 
