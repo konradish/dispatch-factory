@@ -83,6 +83,13 @@ def get_project_health() -> list[dict]:
         # Open PR count (best-effort)
         open_prs = _count_open_prs(project)
 
+        # Count healed-but-unverified sessions (healed + completed, not deployed)
+        healed_unverified = [
+            s for s in proj_sessions
+            if s.get("summary", {}).get("healed", False)
+            and s["state"] == "completed"
+        ]
+
         # Health score: flag neglected or troubled projects
         alerts: list[str] = []
         if days_since_dispatch is not None and days_since_dispatch > 7:
@@ -93,6 +100,8 @@ def get_project_health() -> list[dict]:
             alerts.append("circuit_breaker_tripped")
         if open_prs is not None and open_prs > 5:
             alerts.append("pr_backlog")
+        if healed_unverified:
+            alerts.append("healed_deploy_unverified")
 
         results.append({
             "project": project,

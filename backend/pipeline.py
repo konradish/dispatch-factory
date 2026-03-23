@@ -106,6 +106,16 @@ PIPELINE_DEFINITION: dict = {
                 "actions": ["retry_same", "retry_modified_cmd", "run_fix_then_retry", "skip_stage", "abort"],
                 "fallback": "static_classification",
                 "outputs": ["healer.json"],
+                "post_heal_verification": {
+                    "enabled": True,
+                    "require_deploy_success": True,
+                    "on_unverified": "escalate",
+                    "description": (
+                        "After healer intervention, verify deploy actually succeeded. "
+                        "Sessions that complete without DEPLOYED status after healing "
+                        "are treated as failures and escalated — prevents false confidence."
+                    ),
+                },
             },
             "auto_fixer": {
                 "enabled": True,
