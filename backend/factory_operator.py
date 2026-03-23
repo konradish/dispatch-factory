@@ -18,6 +18,7 @@ from pathlib import Path
 import artifacts
 import backlog
 import circuit_breaker
+import meta_work_ratio
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.operator")
@@ -304,6 +305,9 @@ def _execute_action(action: dict) -> dict:
         # Circuit breaker: block dispatches to tripped projects
         if circuit_breaker.is_project_blocked(ticket["project"]):
             return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
+        # Meta-work ratio: block dispatch-factory work when ratio is too high
+        if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
+            return {"type": "dispatch", "status": "blocked", "detail": "Meta-work ratio exceeded — dispatch a product session first"}
         # Priority inversion guard: block lower-priority dispatch when capacity is at max
         import heartbeat as _hb
         active = artifacts.get_active_sessions()

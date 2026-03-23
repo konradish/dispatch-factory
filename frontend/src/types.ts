@@ -189,6 +189,16 @@ export interface ClearedHealedSession {
   source: string;
 }
 
+// Matches /api/meta-work-ratio response
+export interface MetaWorkRatio {
+  factory_count: number;
+  total: number;
+  ratio: number;
+  blocked: boolean;
+  threshold: number;
+  window: number;
+}
+
 // Matches /api/project-health response
 export interface ProjectHealthEntry {
   project: string;

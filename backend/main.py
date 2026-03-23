@@ -23,6 +23,7 @@ import empty_backlog_detector
 import paused_projects
 import circuit_breaker
 import heartbeat
+import meta_work_ratio
 import intake
 import factory_operator
 import pipeline
@@ -482,6 +483,14 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
             detail=f"Circuit breaker tripped for {ticket['project']} — fix deploy pipeline first",
         )
 
+    # Meta-work ratio: block dispatch-factory work when ratio is too high
+    if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
+        raise HTTPException(
+            status_code=409,
+            detail="Meta-work ratio exceeded — more than 60% of recent sessions are "
+            "dispatch-factory. Dispatch a product session first, or use high priority.",
+        )
+
     # Priority inversion guard: block lower-priority dispatch when eligible
     # higher-priority tickets are pending and capacity is at max
     active = artifacts.get_active_sessions()
@@ -572,6 +581,17 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
     if not circuit_breaker.reset_project(project):
         raise HTTPException(status_code=404, detail="Project not found in circuit breaker state")
     return {"status": "reset", "project": project}
+
+
+# ---------------------------------------------------------------------------
+# Meta-work ratio
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/meta-work-ratio")
+async def meta_work_ratio_state() -> dict:
+    """Current meta-work ratio — how much of recent work is dispatch-factory."""
+    return meta_work_ratio.get_ratio()
 
 
 # ---------------------------------------------------------------------------
