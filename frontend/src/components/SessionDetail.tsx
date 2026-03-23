@@ -354,6 +354,12 @@ const STAGE_CONFIG: {
     render: (data) => <HealerSection data={data as Record<string, unknown>} />,
   },
   {
+    key: "heal_verified",
+    label: "Heal Verification",
+    dotColor: "bg-accent-green",
+    render: (data) => <MonitorSection data={data as Record<string, unknown>} />,
+  },
+  {
     key: "monitor",
     label: "Monitor",
     dotColor: "bg-accent-purple",

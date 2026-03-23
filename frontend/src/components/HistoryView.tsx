@@ -56,8 +56,22 @@ function relativeTime(mtime: number): string {
 function ResultBadge({ session }: { session: HistorySession }) {
   const { state, summary } = session;
   if (summary.healed) {
+    if (summary.heal_verified === "passed") {
+      return (
+        <span className="text-accent-green" title="Healed &amp; Verified">
+          &#9881;&#10003;
+        </span>
+      );
+    }
+    if (summary.heal_verified === "failed") {
+      return (
+        <span className="text-accent-red" title="Healed — Deploy Broken">
+          &#9881;&#10007;
+        </span>
+      );
+    }
     return (
-      <span className="text-accent-yellow" title="Healed">
+      <span className="text-accent-yellow" title="Healed — Unverified">
         &#9881;
       </span>
     );

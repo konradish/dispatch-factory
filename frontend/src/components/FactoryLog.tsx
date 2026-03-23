@@ -25,6 +25,7 @@ const TYPE_STYLES: Record<string, { label: string; color: string }> = {
   reviewed: { label: "REVIEWED", color: "bg-accent-cyan text-accent-cyan" },
   verified: { label: "VERIFIED", color: "bg-accent-green text-accent-green" },
   healed: { label: "HEALED", color: "bg-accent-yellow text-accent-yellow" },
+  heal_verified: { label: "HEAL VERIFIED", color: "bg-accent-green text-accent-green" },
   monitored: { label: "MONITORED", color: "bg-accent-purple text-accent-purple" },
   completed: { label: "COMPLETED", color: "bg-gray-500 text-gray-400" },
   error: { label: "ERROR", color: "bg-accent-red text-accent-red" },
