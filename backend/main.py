@@ -22,6 +22,7 @@ import heartbeat
 import intake
 import factory_operator
 import pipeline
+import project_health
 import terminal
 from config import settings
 
@@ -430,6 +431,14 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
             detail=f"Circuit breaker tripped for {ticket['project']} — fix deploy pipeline first",
         )
 
+    # Self-improvement ratio: block product dispatches when factory maintenance is due
+    import self_improvement
+    if self_improvement.should_block_dispatch(ticket["project"]):
+        raise HTTPException(
+            status_code=409,
+            detail="Self-improvement ratio: 8 product dispatches completed — next dispatch must be a dispatch-factory ticket",
+        )
+
     cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
     cmd.extend(ticket.get("flags", []))
 
@@ -444,6 +453,7 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
         match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
         session_id = match.group(1) if match else "unknown"
         backlog.mark_dispatched(ticket_id, session_id)
+        self_improvement.record_dispatch(ticket["project"])
         return {"status": "dispatched", "session_id": session_id, "stdout": result.stdout}
 
     return {"status": "error", "stderr": result.stderr}
@@ -510,6 +520,17 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
     if not circuit_breaker.reset_project(project):
         raise HTTPException(status_code=404, detail="Project not found in circuit breaker state")
     return {"status": "reset", "project": project}
+
+
+# ---------------------------------------------------------------------------
+# Self-improvement ratio
+# ---------------------------------------------------------------------------
+
+@app.get("/api/self-improvement")
+async def self_improvement_state() -> dict:
+    """Return self-improvement ratio tracking state."""
+    import self_improvement
+    return self_improvement.get_state()
 
 
 # ---------------------------------------------------------------------------

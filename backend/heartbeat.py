@@ -127,20 +127,56 @@ def _reconcile_backlog() -> list[str]:
             backlog.mark_completed(ticket["id"], "completed")
             actions.append(f"ticket {ticket['id']} completed ({session_id})")
             actions.extend(circuit_breaker.record_result(project, success=True))
-        elif state == "error":
+        elif state in ("error", "rolled_back"):
             backlog.mark_completed(ticket["id"], "failed")
-            actions.append(f"ticket {ticket['id']} failed ({session_id})")
+            label = "rolled back" if state == "rolled_back" else "failed"
+            actions.append(f"ticket {ticket['id']} {label} ({session_id})")
             actions.extend(circuit_breaker.record_result(project, success=False))
-        elif state == "rolled_back":
-            backlog.mark_completed(ticket["id"], "failed")
-            actions.append(f"ticket {ticket['id']} rolled back ({session_id})")
-            actions.extend(circuit_breaker.record_result(project, success=False))
+            actions.extend(_check_healed_but_failed(session, project, session_id))
         elif state == "abandoned":
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} abandoned ({session_id})")
             actions.extend(circuit_breaker.record_result(project, success=False))
 
     return actions
+
+
+def _check_healed_but_failed(session: dict, project: str, session_id: str) -> list[str]:
+    """If the session was healed but still failed, create a root-cause ticket.
+
+    When the healer intervenes and the deploy still fails, it indicates a
+    systemic issue that needs human investigation — not another automated
+    retry.  Auto-creating a root-cause ticket prevents the pattern from
+    being silently masked (e.g. electricapp 3x heal-then-fail).
+    """
+    healer = session.get("artifacts", {}).get("healer")
+    if not isinstance(healer, dict):
+        return []
+
+    action = healer.get("action", "unknown")
+    diagnosis = healer.get("diagnosis", "")[:200]
+
+    task = (
+        f"Root-cause investigation: {project} deploy failed after healer "
+        f"intervention ({action}). Session {session_id}. "
+        f"Healer diagnosis: {diagnosis}"
+    )
+
+    ticket = backlog.create_ticket(
+        task=task,
+        project=project,
+        priority="high",
+        source="healer",
+    )
+
+    logger.warning(
+        "Healed-but-failed: %s session %s — created root-cause ticket %s",
+        project,
+        session_id,
+        ticket["id"],
+    )
+
+    return [f"healer-accountability: created root-cause ticket {ticket['id']} for {project} ({session_id})"]
 
 
 def _check_stuck_workers() -> list[str]:
