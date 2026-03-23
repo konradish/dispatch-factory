@@ -9,7 +9,6 @@ survived batch-clear operations (sessions 2253, 2315).
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 from pathlib import Path
 from unittest import mock
