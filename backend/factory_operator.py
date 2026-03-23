@@ -18,6 +18,7 @@ from pathlib import Path
 import artifacts
 import backlog
 import circuit_breaker
+import factory_idle_mode
 import meta_work_ratio
 from config import settings
 
@@ -295,6 +296,9 @@ def _execute_action(action: dict) -> dict:
         return {"type": "do_nothing", "status": "ok"}
 
     elif action_type == "dispatch":
+        # Factory idle mode: hard stop — no dispatches when all projects need human input
+        if factory_idle_mode.is_idle():
+            return {"type": "dispatch", "status": "blocked", "detail": "Factory idle mode — all active projects need human input"}
         ticket_id = action.get("ticket_id", "")
         ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
         if not ticket:

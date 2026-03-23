@@ -25,6 +25,7 @@ import circuit_breaker
 import heartbeat
 import meta_work_ratio
 import intake
+import factory_idle_mode
 import factory_operator
 import pipeline
 import review_policy
@@ -466,6 +467,14 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     if ticket["status"] not in ("pending", "ready"):
         raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
 
+    # Factory idle mode: hard stop — no dispatches when all projects need human input
+    if factory_idle_mode.is_idle():
+        raise HTTPException(
+            status_code=409,
+            detail="Factory idle mode: all active projects have HUMAN INPUT NEEDED "
+            "and backlog is empty. Provide direction before dispatching.",
+        )
+
     # Task quality gate: reject vague tasks before dispatch
     _validate_task_quality(ticket["task"].strip())
 
@@ -592,6 +601,17 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
 async def meta_work_ratio_state() -> dict:
     """Current meta-work ratio — how much of recent work is dispatch-factory."""
     return meta_work_ratio.get_ratio()
+
+
+# ---------------------------------------------------------------------------
+# Factory idle mode
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/factory-idle")
+async def factory_idle_state() -> dict:
+    """Factory idle mode state — whether all projects need human input."""
+    return factory_idle_mode.get_state()
 
 
 # ---------------------------------------------------------------------------

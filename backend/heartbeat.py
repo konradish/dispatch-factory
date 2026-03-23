@@ -20,6 +20,7 @@ import backlog
 import circuit_breaker
 import cleared_healed_sessions
 import empty_backlog_detector
+import factory_idle_mode
 import meta_work_ratio
 from config import settings
 
@@ -91,6 +92,11 @@ def _beat() -> list[str]:
 
     # 4. Check for empty backlog with projects needing human direction
     actions.extend(_check_empty_backlog())
+
+    # 4b. Factory idle mode: emit factory-wide flag_human reminder (24h cooldown)
+    idle_flag = factory_idle_mode.check_and_flag()
+    if idle_flag:
+        actions.append(idle_flag)
 
     # 5. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
@@ -374,6 +380,12 @@ def _check_empty_backlog() -> list[str]:
 def _auto_dispatch() -> list[str]:
     """Auto-dispatch pending tickets if worker capacity is available."""
     actions = []
+
+    # Factory idle mode: hard stop — no dispatches when all projects need human input
+    if factory_idle_mode.is_idle():
+        actions.append("factory_idle: all active projects need human input — dispatch blocked")
+        return actions
+
     active = artifacts.get_active_sessions()
     max_concurrent = _state.get("max_concurrent", 3)
 
