@@ -181,6 +181,14 @@ export interface HealerEffectiveness {
   }[];
 }
 
+// Matches /api/cleared-healed-sessions response
+export interface ClearedHealedSession {
+  cleared_at: number;
+  reason: string;
+  project?: string;
+  source: string;
+}
+
 // Matches /api/project-health response
 export interface ProjectHealthEntry {
   project: string;

@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 import artifacts
 import circuit_breaker
+import cleared_healed_sessions
 
 
 def _days_ago(timestamp: float) -> float:
@@ -83,11 +84,14 @@ def get_project_health() -> list[dict]:
         # Open PR count (best-effort)
         open_prs = _count_open_prs(project)
 
-        # Count healed-but-unverified sessions (healed + completed, not deployed)
+        # Count healed-but-unverified sessions (healed + completed, not deployed),
+        # excluding sessions that have already been reviewed and cleared.
+        cleared_ids = cleared_healed_sessions.get_cleared_ids()
         healed_unverified = [
             s for s in proj_sessions
             if s.get("summary", {}).get("healed", False)
             and s["state"] == "completed"
+            and s["id"] not in cleared_ids
         ]
 
         # Health score: flag neglected or troubled projects
