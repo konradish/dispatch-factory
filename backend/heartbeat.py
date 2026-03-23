@@ -293,6 +293,7 @@ def _auto_dispatch() -> list[str]:
                 match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
                 session_id = match.group(1) if match else "unknown"
                 backlog.mark_dispatched(ticket["id"], session_id)
+                actions.extend(self_improvement.record_dispatch(ticket["project"]))
                 dispatched_count += 1
                 actions.append(f"auto-dispatched {ticket['id']} → {session_id}")
             else:
