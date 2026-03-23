@@ -105,6 +105,16 @@ export interface HeartbeatState {
   uptime_seconds: number;
 }
 
+// Matches /api/self-improvement response
+export interface SelfImprovementState {
+  product_dispatches_since_last_self_improvement: number;
+  total_product_dispatches: number;
+  total_self_improvement_dispatches: number;
+  self_improvement_due: boolean;
+  last_self_improvement_at: number | null;
+  last_updated: number;
+}
+
 // Matches /api/pipeline/summary response
 export interface PipelineStageSummary {
   id: string;
