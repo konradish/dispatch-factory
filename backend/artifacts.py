@@ -18,6 +18,7 @@ ARTIFACT_TYPES: dict[str, str] = {
     "-healer.json": "healer",
     "-fixer.json": "fixer",
     "-error.json": "error",
+    "-abandoned.json": "abandoned",
     "-result.md": "result",
     "-validate.json": "validate",
 }
@@ -72,6 +73,8 @@ def _extract_task(artifacts_dir: Path, session_id: str) -> str:
 
 def _detect_session_state(artifacts: dict[str, object]) -> str:
     """Derive a high-level state from whichever artifacts exist."""
+    if "abandoned" in artifacts:
+        return "abandoned"
     if "error" in artifacts:
         return "error"
     if "result" in artifacts:
@@ -225,6 +228,23 @@ def get_active_sessions() -> list[dict]:
         if SESSION_RE.match(name) and cmd not in SHELL_COMMANDS:
             sessions.append({"id": name, "active": True, "command": cmd})
     return sessions
+
+
+def abandon_session(session_id: str, reason: str = "no active worker") -> bool:
+    """Mark a session as abandoned by writing an abandoned artifact."""
+    artifacts_dir = _artifacts_path()
+    if not artifacts_dir.is_dir():
+        return False
+    abandoned_file = artifacts_dir / f"{session_id}-abandoned.json"
+    if abandoned_file.is_file():
+        return False  # Already abandoned
+    import time
+    data = {
+        "reason": reason,
+        "timestamp": time.time(),
+    }
+    abandoned_file.write_text(json.dumps(data, indent=2))
+    return True
 
 
 def get_known_projects() -> list[str]:
@@ -412,6 +432,7 @@ def get_factory_log(limit: int = 100) -> list[dict]:
             "-healer.json": ("healed", ""),
             "-monitor.json": ("monitored", "Monitor completed"),
             "-error.json": ("error", ""),
+            "-abandoned.json": ("abandoned", ""),
             "-result.md": ("completed", "Pipeline finished"),
         }
 
@@ -433,6 +454,8 @@ def get_factory_log(limit: int = 100) -> list[dict]:
                     desc = f"Healer: {data.get('action', '?')} — {data.get('diagnosis', '')[:100]}"
                 elif data and event_type == "error":
                     desc = f"Error: {data.get('error_class', '?')}"
+                elif data and event_type == "abandoned":
+                    desc = f"Abandoned: {data.get('reason', '?')}"
 
             events.append({
                 "timestamp": mtime,
