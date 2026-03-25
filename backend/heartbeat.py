@@ -167,6 +167,9 @@ def _reconcile_backlog() -> list[str]:
             healed = _session_was_healed(session)
             if healed:
                 actions.extend(healer_circuit_breaker.record_healer_intervention(project, session_id))
+                rebase_reason = _healer_left_rebase_paused(project)
+                if rebase_reason:
+                    actions.append(f"healer-rebase-paused: {project} ({session_id}) — {rebase_reason}")
                 backlog.mark_completed(ticket["id"], "failed")
                 actions.append(f"ticket {ticket['id']} healed-but-unverified ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=False))
@@ -197,6 +200,16 @@ def _session_was_healed(session: dict) -> bool:
     """Check if a session had healer intervention."""
     healer = session.get("artifacts", {}).get("healer")
     return isinstance(healer, dict)
+
+
+def _healer_left_rebase_paused(project: str) -> str | None:
+    """Check if a healer's git operation left a rebase paused in the worktree.
+
+    Returns a reason string if rebase is in progress, None otherwise.
+    This catches the case where run_fix_then_retry's git pull --rebase
+    hits a merge conflict and is left awaiting manual resolution.
+    """
+    return post_heal_verify._detect_rebase_in_progress(project)
 
 
 def _escalate_healed_unverified(session: dict, project: str, session_id: str) -> list[str]:

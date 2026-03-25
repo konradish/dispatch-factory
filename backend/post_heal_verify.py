@@ -32,6 +32,46 @@ _cache_ts: float = 0.0
 _CACHE_TTL = 300.0  # 5 minutes
 
 
+def _detect_rebase_in_progress(project: str) -> str | None:
+    """Check if a git rebase is paused in the project worktree.
+
+    Returns a reason string if rebase is in progress, None otherwise.
+    Uses `git rev-parse --git-dir` to resolve the git directory correctly
+    even for worktrees with separate git dirs.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", _get_project_dir(project), "rev-parse", "--git-dir"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    git_dir = Path(result.stdout.strip())
+    if not git_dir.is_absolute():
+        git_dir = Path(_get_project_dir(project)) / git_dir
+
+    for rebase_dir in ("rebase-merge", "rebase-apply"):
+        if (git_dir / rebase_dir).is_dir():
+            return f"rebase paused awaiting manual resolution ({rebase_dir})"
+
+    return None
+
+
+def _get_project_dir(project: str) -> str:
+    """Get the project worktree directory from dispatch --projects or settings."""
+    # Use the dispatch projects directory convention
+    projects_dir = getattr(settings, "projects_dir", None)
+    if projects_dir:
+        return str(Path(projects_dir) / project)
+    return str(Path.home() / "projects" / project)
+
+
 def _get_project_url(project: str) -> str | None:
     """Get the deploy/health URL for a project from dispatch --projects."""
     global _url_cache, _cache_ts
@@ -93,6 +133,25 @@ def verify_deploy(project: str, session_id: str) -> dict:
     - http_status: the HTTP status code (if checked)
     - latency_ms: response time in milliseconds (if checked)
     """
+    # Pre-verification guard: check for paused rebase before attempting
+    # health check.  A paused rebase means the healer's git operation
+    # failed — the deploy cannot have succeeded.
+    rebase_reason = _detect_rebase_in_progress(project)
+    if rebase_reason:
+        logger.warning(
+            "Rebase in progress for %s (%s) — failing verification: %s",
+            project, session_id, rebase_reason,
+        )
+        return {
+            "status": "failed",
+            "reason": rebase_reason,
+            "url": None,
+            "http_status": None,
+            "latency_ms": None,
+            "session_id": session_id,
+            "verified_at": time.time(),
+        }
+
     url = _get_project_url(project)
 
     if not url:
