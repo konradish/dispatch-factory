@@ -22,11 +22,12 @@ import backlog
 import empty_backlog_detector
 import paused_projects
 import circuit_breaker
+import healer_circuit_breaker
 import heartbeat
 import meta_work_ratio
 import intake
 import factory_idle_mode
-import factory_operator
+import foreman
 import pipeline
 import review_policy
 import reviewer_calibration
@@ -41,7 +42,7 @@ logger = logging.getLogger("dispatch-factory")
 
 SESSION_ID_RE = re.compile(r"^(?:worker|deploy|validate)-[a-z][a-z0-9-]*-\d+$")
 PROJECT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only"])
+ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--no-heal"])
 
 # Task quality gate — reject vague or underspecified tasks.
 # Vague tasks correlate with deploy failures (sessions 1822, 1824, 1609).
@@ -238,6 +239,12 @@ async def factory_log(limit: int = 100) -> list[dict]:
     return artifacts.get_factory_log(limit=limit)
 
 
+@app.get("/api/activity")
+async def activity_feed(limit: int = 100) -> list[dict]:
+    """Unified activity feed: session events + ticket lifecycle events."""
+    return artifacts.get_activity_feed(limit=limit)
+
+
 @app.get("/api/sessions/{session_id}")
 async def get_session(session_id: str) -> dict[str, Any]:
     _validate_session_id(session_id)
@@ -420,7 +427,7 @@ async def create_backlog_ticket(req: BacklogTicketRequest) -> dict:
             raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
     if req.priority not in ("low", "normal", "high", "urgent"):
         raise HTTPException(status_code=400, detail="Priority must be low/normal/high/urgent")
-    valid_statuses = ("intake", "needs_input", "ready", "pending")
+    valid_statuses = ("intake", "needs_input", "on_hold", "ready", "pending")
     if req.status not in valid_statuses:
         raise HTTPException(status_code=400, detail=f"Status must be one of: {valid_statuses}")
 
@@ -456,6 +463,72 @@ async def delete_backlog_ticket(ticket_id: str) -> dict[str, str]:
     return {"status": "deleted"}
 
 
+@app.post("/api/backlog/{ticket_id}/note")
+async def add_ticket_note(ticket_id: str, body: dict) -> dict:
+    """Add a note to a backlog ticket. Optionally change status."""
+    _require_controls()
+    text = (body.get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Note text is required")
+    author = body.get("author", "human")
+    new_status = body.get("status")  # optional: move ticket after noting
+
+    ticket = backlog.add_note(ticket_id, text, author)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    if new_status:
+        ticket = backlog.update_ticket(ticket_id, {"status": new_status})
+    return ticket
+
+
+@app.get("/api/backlog/{ticket_id}/thread")
+async def get_ticket_thread(ticket_id: str) -> list[dict]:
+    """Return unified timeline of ticket events + session artifacts."""
+    tickets = backlog.list_tickets()
+    ticket = next((t for t in tickets if t["id"] == ticket_id), None)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    events: list[dict] = []
+
+    # Ticket lifecycle events
+    if ticket.get("created_at"):
+        events.append({
+            "type": "created",
+            "timestamp": ticket["created_at"],
+            "data": {"task": ticket["task"], "project": ticket["project"], "priority": ticket["priority"]},
+        })
+
+    for note in ticket.get("notes", []):
+        events.append({
+            "type": "note",
+            "timestamp": note["timestamp"],
+            "data": note,
+        })
+
+    if ticket.get("dispatched_at"):
+        events.append({
+            "type": "dispatched",
+            "timestamp": ticket["dispatched_at"],
+            "data": {"session_id": ticket.get("session_id")},
+        })
+
+    if ticket.get("completed_at"):
+        events.append({
+            "type": "completed",
+            "timestamp": ticket["completed_at"],
+            "data": {"status": ticket.get("status")},
+        })
+
+    # Session artifacts (if ticket was dispatched)
+    if ticket.get("session_id"):
+        session_events = artifacts.get_session_timeline(ticket["session_id"])
+        events.extend(session_events)
+
+    events.sort(key=lambda e: e["timestamp"])
+    return events
+
+
 @app.post("/api/backlog/{ticket_id}/dispatch")
 async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     """Dispatch a pending backlog ticket immediately."""
@@ -474,6 +547,15 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
             status_code=409,
             detail="Factory idle mode: all active projects have HUMAN INPUT NEEDED "
             "and backlog is empty. Provide direction before dispatching.",
+        )
+
+    # Reviewer calibration gate: block dispatch if reviewer is known-miscalibrated
+    cal_state = reviewer_calibration.get_calibration_state()
+    if cal_state.get("consecutive_failures", 0) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Reviewer miscalibrated — last canary test was approved when it should "
+            "have been rejected. Run /api/reviewer-calibration to re-test after fixing.",
         )
 
     # Task quality gate: reject vague tasks before dispatch
@@ -594,6 +676,28 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Healer circuit breaker
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/healer-circuit-breaker")
+async def healer_circuit_breaker_state() -> dict[str, dict]:
+    """Return healer circuit breaker state for all projects."""
+    return healer_circuit_breaker.get_state()
+
+
+@app.post("/api/healer-circuit-breaker/{project}/reset")
+async def reset_healer_circuit_breaker(project: str) -> dict[str, str]:
+    """Manually reset the healer circuit breaker for a project."""
+    _require_controls()
+    if not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+    if not healer_circuit_breaker.reset_project(project):
+        raise HTTPException(status_code=404, detail="Project not found in healer circuit breaker state")
+    return {"status": "reset", "project": project}
+
+
+# ---------------------------------------------------------------------------
 # Meta-work ratio
 # ---------------------------------------------------------------------------
 
@@ -602,6 +706,37 @@ async def reset_circuit_breaker(project: str) -> dict[str, str]:
 async def meta_work_ratio_state() -> dict:
     """Current meta-work ratio — how much of recent work is dispatch-factory."""
     return meta_work_ratio.get_ratio()
+
+
+@app.get("/api/self-improvement")
+async def self_improvement_state() -> dict:
+    """Self-improvement ratio for the backlog UI — wraps meta-work-ratio with extra context."""
+    ratio = meta_work_ratio.get_ratio()
+    sessions = artifacts.list_sessions_with_timestamps()[:20]
+    factory_sessions = [s for s in sessions if s["project"] == "dispatch-factory"]
+    product_sessions = [s for s in sessions if s["project"] != "dispatch-factory"]
+
+    # Count product dispatches since last factory dispatch
+    product_since = 0
+    for s in sessions:
+        if s["project"] == "dispatch-factory":
+            break
+        product_since += 1
+
+    last_factory_mtime = factory_sessions[0]["mtime"] if factory_sessions else None
+
+    return {
+        "product_dispatches_since_last_self_improvement": product_since,
+        "total_product_dispatches": len(product_sessions),
+        "total_self_improvement_dispatches": len(factory_sessions),
+        "self_improvement_due": ratio["ratio"] < 0.1 and product_since >= 8,
+        "last_self_improvement_at": last_factory_mtime,
+        "last_updated": import_time(),
+    }
+
+
+def import_time() -> float:
+    return __import__("time").time()
 
 
 # ---------------------------------------------------------------------------
@@ -819,50 +954,107 @@ async def clear_empty_backlog_flag(project: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Operator — LLM-driven factory management with rotating lenses
+# Foreman — LLM-driven factory management with rotating lenses
+# ---------------------------------------------------------------------------
+
+@app.get("/api/foreman/lenses")
+async def list_foreman_lenses() -> list[dict]:
+    return foreman.list_lenses()
+
+
+@app.get("/api/foreman/lenses/{lens_id}")
+async def get_foreman_lens(lens_id: str) -> dict:
+    lens = foreman.get_lens(lens_id)
+    if lens is None:
+        raise HTTPException(status_code=404, detail="Lens not found")
+    return lens
+
+
+@app.put("/api/foreman/lenses/{lens_id}")
+async def save_foreman_lens(lens_id: str, body: dict) -> dict[str, str]:
+    _require_controls()
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    foreman.save_lens(lens_id, prompt)
+    return {"status": "saved"}
+
+
+@app.delete("/api/foreman/lenses/{lens_id}")
+async def delete_foreman_lens(lens_id: str) -> dict[str, str]:
+    _require_controls()
+    if not foreman.delete_lens(lens_id):
+        raise HTTPException(status_code=404, detail="Lens not found")
+    return {"status": "deleted"}
+
+
+@app.get("/api/foreman/rotation")
+async def foreman_rotation() -> dict:
+    return foreman.get_rotation_state()
+
+
+@app.post("/api/foreman/run")
+async def run_foreman_now(lens_id: str | None = None) -> dict:
+    """Manually trigger a foreman cycle with a specific or next-in-rotation lens."""
+    _require_controls()
+    return foreman.run_foreman(lens_id=lens_id)
+
+
+@app.post("/api/foreman/chat")
+async def foreman_chat(body: dict) -> dict:
+    """Chat with the foreman — run a foreman cycle with a human message injected."""
+    _require_controls()
+    message = (body.get("message") or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+    return foreman.run_foreman(human_message=message)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat aliases: /api/operator/* → /api/foreman/*
 # ---------------------------------------------------------------------------
 
 @app.get("/api/operator/lenses")
-async def list_operator_lenses() -> list[dict]:
-    return factory_operator.list_lenses()
+async def list_operator_lenses_compat() -> list[dict]:
+    return foreman.list_lenses()
 
 
 @app.get("/api/operator/lenses/{lens_id}")
-async def get_operator_lens(lens_id: str) -> dict:
-    lens = factory_operator.get_lens(lens_id)
+async def get_operator_lens_compat(lens_id: str) -> dict:
+    lens = foreman.get_lens(lens_id)
     if lens is None:
         raise HTTPException(status_code=404, detail="Lens not found")
     return lens
 
 
 @app.put("/api/operator/lenses/{lens_id}")
-async def save_operator_lens(lens_id: str, body: dict) -> dict[str, str]:
+async def save_operator_lens_compat(lens_id: str, body: dict) -> dict[str, str]:
     _require_controls()
     prompt = body.get("prompt", "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="Prompt cannot be empty")
-    factory_operator.save_lens(lens_id, prompt)
+    foreman.save_lens(lens_id, prompt)
     return {"status": "saved"}
 
 
 @app.delete("/api/operator/lenses/{lens_id}")
-async def delete_operator_lens(lens_id: str) -> dict[str, str]:
+async def delete_operator_lens_compat(lens_id: str) -> dict[str, str]:
     _require_controls()
-    if not factory_operator.delete_lens(lens_id):
+    if not foreman.delete_lens(lens_id):
         raise HTTPException(status_code=404, detail="Lens not found")
     return {"status": "deleted"}
 
 
 @app.get("/api/operator/rotation")
-async def operator_rotation() -> dict:
-    return factory_operator.get_rotation_state()
+async def operator_rotation_compat() -> dict:
+    return foreman.get_rotation_state()
 
 
 @app.post("/api/operator/run")
-async def run_operator_now(lens_id: str | None = None) -> dict:
-    """Manually trigger an operator cycle with a specific or next-in-rotation lens."""
+async def run_operator_now_compat(lens_id: str | None = None) -> dict:
+    """Backward-compat alias for /api/foreman/run."""
     _require_controls()
-    return factory_operator.run_operator(lens_id=lens_id)
+    return foreman.run_foreman(lens_id=lens_id)
 
 
 # ---------------------------------------------------------------------------
@@ -917,12 +1109,50 @@ async def get_pipeline_summary() -> dict:
     return pipeline.get_pipeline_summary()
 
 
+@app.get("/api/pipeline/stations/{station_id}")
+async def get_pipeline_station(station_id: str) -> dict:
+    station = pipeline.get_station(station_id)
+    if station is None:
+        raise HTTPException(status_code=404, detail="Station not found")
+    return station
+
+
 @app.get("/api/pipeline/stages/{stage_id}")
-async def get_pipeline_stage(stage_id: str) -> dict:
-    stage = pipeline.get_stage(stage_id)
-    if stage is None:
-        raise HTTPException(status_code=404, detail="Stage not found")
-    return stage
+async def get_pipeline_stage_compat(stage_id: str) -> dict:
+    """Backward-compat alias for /api/pipeline/stations/{station_id}."""
+    station = pipeline.get_station(stage_id)
+    if station is None:
+        raise HTTPException(status_code=404, detail="Station not found")
+    return station
+
+
+@app.patch("/api/pipeline/stations/{station_id}")
+async def update_pipeline_station(station_id: str, body: dict) -> dict:
+    """Update mutable fields on a pipeline station."""
+    _require_controls()
+    result = pipeline.update_station(station_id, body)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Station not found")
+    if isinstance(result, list):
+        raise HTTPException(status_code=400, detail="; ".join(result))
+    return result
+
+
+@app.patch("/api/pipeline/global")
+async def update_pipeline_global(body: dict) -> dict:
+    """Update global pipeline config."""
+    _require_controls()
+    result = pipeline.update_global(body)
+    if isinstance(result, list):
+        raise HTTPException(status_code=400, detail="; ".join(result))
+    return result
+
+
+@app.post("/api/pipeline/reset")
+async def reset_pipeline() -> dict:
+    """Reset pipeline to code defaults."""
+    _require_controls()
+    return pipeline.reset_pipeline()
 
 
 # ---------------------------------------------------------------------------

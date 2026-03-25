@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import artifacts
 import circuit_breaker
 import cleared_healed_sessions
+import healer_circuit_breaker
 import empty_backlog_detector
 import paused_projects
 
@@ -50,6 +51,7 @@ def get_project_health() -> list[dict]:
     projects = artifacts.get_known_projects()  # already filters archived
     sessions = artifacts.list_sessions_with_timestamps()
     cb_state = circuit_breaker.get_state()
+    hcb_state = healer_circuit_breaker.get_state()
 
     # Group sessions by project
     by_project: dict[str, list[dict]] = {p: [] for p in projects}
@@ -109,6 +111,10 @@ def get_project_health() -> list[dict]:
             alerts.append("deploy_broken")
         if tripped:
             alerts.append("circuit_breaker_tripped")
+        hcb = hcb_state.get(project, {})
+        healer_tripped = hcb.get("tripped", False)
+        if healer_tripped:
+            alerts.append("healer_circuit_breaker_tripped")
         if open_prs is not None and open_prs > 5:
             alerts.append("pr_backlog")
 
