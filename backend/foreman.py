@@ -401,9 +401,10 @@ def _execute_action(action: dict) -> dict:
             flags = ticket.get("flags", [])
             if "--no-heal" not in flags:
                 ticket.setdefault("flags", []).append("--no-heal")
-        # Actually dispatch
+        # Actually dispatch — filter to known CLI flags only
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy", "--no-heal"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
-        cmd.extend(ticket.get("flags", []))
+        cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if r.returncode == 0:
@@ -456,6 +457,14 @@ def _execute_action(action: dict) -> dict:
         if result:
             return {"type": "cancel_ticket", "status": "ok", "ticket_id": ticket_id}
         return {"type": "cancel_ticket", "status": "error", "detail": f"Ticket {ticket_id} not found"}
+
+    elif action_type == "reset_circuit_breaker":
+        project = action.get("project", "")
+        if not project:
+            return {"type": action_type, "status": "error", "detail": "project required"}
+        if circuit_breaker.reset_project(project):
+            return {"type": action_type, "status": "ok", "project": project}
+        return {"type": action_type, "status": "error", "detail": f"No circuit breaker state for '{project}'"}
 
     elif action_type == "update_ticket":
         ticket_id = action.get("ticket_id", "")
