@@ -585,9 +585,10 @@ def _auto_dispatch() -> list[str]:
                 ticket.setdefault("flags", []).append("--no-heal")
             actions.append(f"healer-circuit-breaker: {ticket['id']} dispatched with --no-heal ({ticket['project']})")
 
-        # Dispatch via CLI
+        # Dispatch via CLI — filter to known CLI flags only
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
-        cmd.extend(ticket.get("flags", []))
+        cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
 
         try:
             result = subprocess.run(
