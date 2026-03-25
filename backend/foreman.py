@@ -436,6 +436,11 @@ def _execute_action(action: dict) -> dict:
     elif action_type == "reprioritize":
         ticket_id = action.get("ticket_id", "")
         new_priority = action.get("priority", "normal")
+        # Guard: foreman cannot escalate dispatch-factory tickets to urgent
+        # (only humans can, to prevent meta-work breaker bypass via priority gaming)
+        ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
+        if ticket and ticket.get("project") == "dispatch-factory" and new_priority == "urgent":
+            return {"type": "reprioritize", "status": "blocked", "detail": "Cannot escalate dispatch-factory tickets to urgent — human escalation only"}
         result = backlog.update_ticket(ticket_id, {"priority": new_priority})
         if result:
             return {"type": "reprioritize", "status": "ok", "ticket_id": ticket_id, "priority": new_priority}
@@ -462,6 +467,11 @@ def _execute_action(action: dict) -> dict:
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
             return {"type": action_type, "status": "error", "detail": f"No allowed fields in updates (allowed: {allowed})"}
+        # Guard: foreman cannot escalate dispatch-factory tickets to urgent
+        if filtered.get("priority") == "urgent":
+            ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
+            if ticket and ticket.get("project") == "dispatch-factory":
+                return {"type": action_type, "status": "blocked", "detail": "Cannot escalate dispatch-factory tickets to urgent — human escalation only"}
         result = backlog.update_ticket(ticket_id, filtered)
         if result:
             return {"type": action_type, "status": "ok", "ticket_id": ticket_id, "detail": f"Updated: {list(filtered.keys())}"}

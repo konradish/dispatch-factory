@@ -1,9 +1,9 @@
 """Meta-work ratio circuit breaker — prevent dispatch-factory self-improvement spirals.
 
-If more than 60% of the last 10 dispatched sessions are dispatch-factory tickets,
-block further dispatch-factory work (except high-priority) until a product session
-is dispatched. This prevents the factory from spiraling into indefinite
-self-improvement when product backlogs are empty.
+If 60% or more of the last 10 dispatched sessions are dispatch-factory tickets,
+block further dispatch-factory work (except urgent, human-escalated) until a
+product session is dispatched. This prevents the factory from spiraling into
+indefinite self-improvement when product backlogs are empty.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def get_ratio() -> dict:
         "factory_count": factory_count,
         "total": total,
         "ratio": round(ratio, 2),
-        "blocked": ratio > THRESHOLD,
+        "blocked": ratio >= THRESHOLD,
         "threshold": THRESHOLD,
         "window": WINDOW_SIZE,
     }
@@ -68,7 +68,7 @@ def is_blocked(priority: str = "normal") -> bool:
     if info["blocked"]:
         logger.warning(
             "Meta-work ratio breaker: %d/%d recent sessions are dispatch-factory "
-            "(%.0f%% > %.0f%% threshold) — blocking non-high-priority factory work",
+            "(%.0f%% >= %.0f%% threshold) — blocking non-urgent factory work",
             info["factory_count"],
             info["total"],
             info["ratio"] * 100,
