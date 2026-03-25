@@ -94,10 +94,13 @@ PIPELINE_DEFINITION: dict = {
                 "version": "2",
                 "policy_endpoint": "/api/review-policy",
                 "prompt_addendum_endpoint": "/api/review-policy/prompt",
+                "integration_status": "NOT_WIRED",
                 "description": (
                     "Tightened after leniency audit (2026-03-22): 98% approval rate, "
                     "healed sessions reviewed without healer context, scope creep tolerated. "
-                    "Dispatch runner should fetch policy and inject into reviewer prompt."
+                    "KNOWN GAP (2026-03-25): dispatch binary does NOT fetch this policy — "
+                    "run_reviewer() uses a hardcoded 'Be pragmatic' prompt. "
+                    "Until the binary is updated, this policy is dead letter."
                 ),
                 "healed_session_scrutiny": {
                     "enabled": True,

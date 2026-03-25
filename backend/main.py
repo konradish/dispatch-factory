@@ -1203,6 +1203,43 @@ async def get_calibration_canaries() -> list[dict]:
     ]
 
 
+@app.get("/api/reviewer-calibration/diagnosis")
+async def get_calibration_diagnosis() -> dict:
+    """Diagnostic info about what calibration tests vs what the real reviewer does.
+
+    Root cause of 100% APPROVE rate (2026-03-25): the dispatch binary's
+    run_reviewer() never fetches /api/review-policy/prompt — it uses its own
+    hardcoded prompt.  Prior calibration tested a simulated reviewer with the
+    policy injected, which didn't match production.
+    """
+    state = reviewer_calibration.get_calibration_state()
+    runs = state.get("runs", [])
+    prompt_modes = {}
+    for run in runs:
+        mode = run.get("prompt_mode", "policy_simulated")
+        prompt_modes[mode] = prompt_modes.get(mode, 0) + 1
+
+    return {
+        "root_cause": (
+            "dispatch binary run_reviewer() never fetches /api/review-policy/prompt — "
+            "uses hardcoded 'Be pragmatic' prompt. Prior calibration tested a simulated "
+            "reviewer with the strict policy injected, not the real production prompt."
+        ),
+        "fix_applied": (
+            "Calibration now uses the real dispatch reviewer prompt (matching "
+            "run_reviewer() in the dispatch binary). Canaries that pass with the real "
+            "prompt prove the reviewer works; failures prove it doesn't."
+        ),
+        "dispatch_binary_fetches_policy": False,
+        "calibration_prompt_mode": "real_reviewer",
+        "run_history_by_mode": prompt_modes,
+        "recommendation": (
+            "Update the dispatch binary to fetch /api/review-policy/prompt and inject "
+            "the addendum into the reviewer prompt before each review."
+        ),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Static files — serve frontend build in production
 # ---------------------------------------------------------------------------
