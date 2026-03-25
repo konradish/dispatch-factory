@@ -457,6 +457,14 @@ def _execute_action(action: dict) -> dict:
             return {"type": "cancel_ticket", "status": "ok", "ticket_id": ticket_id}
         return {"type": "cancel_ticket", "status": "error", "detail": f"Ticket {ticket_id} not found"}
 
+    elif action_type == "reset_circuit_breaker":
+        project = action.get("project", "")
+        if not project:
+            return {"type": action_type, "status": "error", "detail": "project required"}
+        if circuit_breaker.reset_project(project):
+            return {"type": action_type, "status": "ok", "project": project}
+        return {"type": action_type, "status": "error", "detail": f"No circuit breaker state for '{project}'"}
+
     elif action_type == "update_ticket":
         ticket_id = action.get("ticket_id", "")
         updates = action.get("updates", {})
