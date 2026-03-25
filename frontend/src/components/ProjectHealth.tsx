@@ -6,6 +6,7 @@ const ALERT_STYLES: Record<string, { label: string; color: string }> = {
   neglected: { label: "NEGLECTED", color: "bg-accent-yellow/15 text-accent-yellow" },
   deploy_broken: { label: "DEPLOY BROKEN", color: "bg-accent-red/15 text-accent-red" },
   circuit_breaker_tripped: { label: "CB TRIPPED", color: "bg-accent-red/15 text-accent-red" },
+  healer_circuit_breaker_tripped: { label: "HEALER CB TRIPPED", color: "bg-accent-red/15 text-accent-red" },
   pr_backlog: { label: "PR BACKLOG", color: "bg-accent-purple/15 text-accent-purple" },
   empty_backlog: { label: "EMPTY BACKLOG", color: "bg-accent-yellow/15 text-accent-yellow" },
 };
