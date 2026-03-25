@@ -7,7 +7,16 @@ of truth that dispatch reads from, making the pipeline evolvable.
 
 from __future__ import annotations
 
+import copy
+import json
+from pathlib import Path
+
 from config import settings
+
+PIPELINE_FILE = "pipeline-definition.json"
+MUTABLE_FIELDS = {"enabled", "timeout_seconds", "max_turns", "trigger_keywords", "skip_keywords"}
+IMMUTABLE_FIELDS = {"id", "name", "phase", "engine", "outputs"}
+REQUIRED_STAGES = {"worker", "reporter"}
 
 # The pipeline definition — extracted from dispatch's hardcoded structure.
 # This is the data representation of what's currently baked into 4,242 lines of Python.
@@ -36,8 +45,8 @@ PIPELINE_DEFINITION: dict = {
             "skip_keywords": ["typo", "css", "lint", "docs", "readme", "comment"],
             "engine": "claude_reason",
             "model": "claude-opus-4-6",
-            "max_turns": 100,
-            "timeout_seconds": 90,
+            "max_turns": 6,
+            "timeout_seconds": 300,
             "outputs": ["planner.json"],
             "gates": {
                 "database_change": "stops pipeline — requires human review",
@@ -191,14 +200,152 @@ PIPELINE_DEFINITION: dict = {
 }
 
 
+def _pipeline_path() -> Path:
+    return Path(settings.artifacts_dir) / PIPELINE_FILE
+
+
+def _load_pipeline() -> dict:
+    """Load pipeline: code defaults merged with JSON overrides."""
+    result = copy.deepcopy(PIPELINE_DEFINITION)
+    path = _pipeline_path()
+    if not path.is_file():
+        return result
+    try:
+        overrides = json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return result
+    if "global" in overrides:
+        result["global"].update(overrides["global"])
+    override_stages = {s["id"]: s for s in overrides.get("stages", overrides.get("stations", []))}
+    for stage in result["stages"]:
+        if stage["id"] in override_stages:
+            for k, v in override_stages[stage["id"]].items():
+                if k != "id":
+                    stage[k] = v
+    return result
+
+
+def _save_overrides(pipeline_def: dict) -> None:
+    defaults = PIPELINE_DEFINITION
+    overrides: dict = {}
+    global_diff = {k: v for k, v in pipeline_def["global"].items() if v != defaults["global"].get(k)}
+    if global_diff:
+        overrides["global"] = global_diff
+    default_stages = {s["id"]: s for s in defaults["stages"]}
+    stage_diffs = []
+    for stage in pipeline_def["stages"]:
+        sid = stage["id"]
+        default = default_stages.get(sid, {})
+        diff = {"id": sid}
+        for k, v in stage.items():
+            if k != "id" and k in MUTABLE_FIELDS and v != default.get(k):
+                diff[k] = v
+        if len(diff) > 1:
+            stage_diffs.append(diff)
+    if stage_diffs:
+        overrides["stages"] = stage_diffs
+    path = _pipeline_path()
+    if overrides:
+        path.write_text(json.dumps(overrides, indent=2))
+    elif path.is_file():
+        path.unlink()
+
+
+def _validate_stage_update(stage_id: str, updates: dict) -> list[str]:
+    errors: list[str] = []
+    for k in updates:
+        if k in IMMUTABLE_FIELDS:
+            errors.append(f"Field '{k}' is immutable")
+        elif k not in MUTABLE_FIELDS:
+            errors.append(f"Unknown mutable field '{k}'")
+    if "enabled" in updates:
+        val = updates["enabled"]
+        if stage_id in REQUIRED_STAGES and val is not True:
+            errors.append(f"Stage '{stage_id}' cannot be disabled")
+        if val not in (True, False) and not (stage_id == "planner" and val == "auto"):
+            errors.append("enabled must be true/false" + (" or 'auto' for planner" if stage_id == "planner" else ""))
+    if "timeout_seconds" in updates:
+        val = updates["timeout_seconds"]
+        if not isinstance(val, (int, float)) or val < 1 or val > 7200:
+            errors.append("timeout_seconds must be 1-7200")
+    if "max_turns" in updates:
+        val = updates["max_turns"]
+        if not isinstance(val, int) or val < 1 or val > 200:
+            errors.append("max_turns must be 1-200")
+    for kw_field in ("trigger_keywords", "skip_keywords"):
+        if kw_field in updates:
+            if stage_id != "planner":
+                errors.append(f"'{kw_field}' only applies to planner")
+            elif not isinstance(updates[kw_field], list) or not all(isinstance(x, str) and x for x in updates[kw_field]):
+                errors.append(f"'{kw_field}' must be a list of non-empty strings")
+    return errors
+
+
+def _validate_global_update(updates: dict) -> list[str]:
+    errors: list[str] = []
+    allowed = {"session_timeout_minutes", "deploy_window", "stage_timeout_seconds"}
+    for k in updates:
+        if k not in allowed:
+            errors.append(f"Unknown global field '{k}'")
+    if "session_timeout_minutes" in updates:
+        val = updates["session_timeout_minutes"]
+        if not isinstance(val, (int, float)) or val < 1 or val > 180:
+            errors.append("session_timeout_minutes must be 1-180")
+    if "stage_timeout_seconds" in updates:
+        val = updates["stage_timeout_seconds"]
+        if not isinstance(val, (int, float)) or val < 1 or val > 7200:
+            errors.append("stage_timeout_seconds must be 1-7200")
+    if "deploy_window" in updates:
+        val = updates["deploy_window"]
+        if not isinstance(val, list) or len(val) != 2 or not all(isinstance(x, int) and 0 <= x <= 23 for x in val):
+            errors.append("deploy_window must be [start_hour, end_hour] with values 0-23")
+    return errors
+
+
+def update_station(station_id: str, updates: dict) -> dict | list[str] | None:
+    """Update mutable fields on a stage. Returns updated stage, validation errors, or None."""
+    pipeline_def = _load_pipeline()
+    stage = next((s for s in pipeline_def["stages"] if s["id"] == station_id), None)
+    if stage is None:
+        return None
+    errors = _validate_stage_update(station_id, updates)
+    if errors:
+        return errors
+    for k, v in updates.items():
+        if k in MUTABLE_FIELDS:
+            stage[k] = v
+    _save_overrides(pipeline_def)
+    return stage
+
+
+def update_global(updates: dict) -> dict | list[str]:
+    """Update global pipeline config."""
+    errors = _validate_global_update(updates)
+    if errors:
+        return errors
+    pipeline_def = _load_pipeline()
+    pipeline_def["global"].update(updates)
+    _save_overrides(pipeline_def)
+    return pipeline_def["global"]
+
+
+def reset_pipeline() -> dict:
+    """Delete override file, return code defaults."""
+    path = _pipeline_path()
+    if path.is_file():
+        path.unlink()
+    return copy.deepcopy(PIPELINE_DEFINITION)
+
+
 def get_pipeline() -> dict:
-    """Return the current pipeline definition."""
-    return PIPELINE_DEFINITION
+    """Return the current pipeline definition (with overrides applied)."""
+    return _load_pipeline()
 
 
 def get_stage(stage_id: str) -> dict | None:
     """Return a single stage definition."""
-    for stage in PIPELINE_DEFINITION["stages"]:
+    pipeline_def = _load_pipeline()
+    for stage in pipeline_def["stages"]:
         if stage["id"] == stage_id:
             return stage
     return None
@@ -206,8 +353,9 @@ def get_stage(stage_id: str) -> dict | None:
 
 def get_pipeline_summary() -> dict:
     """Compact summary for dashboard display."""
+    pipeline_def = _load_pipeline()
     stages = []
-    for s in PIPELINE_DEFINITION["stages"]:
+    for s in pipeline_def["stages"]:
         healer = None
         if "healer" in s:
             healer = {
@@ -229,8 +377,9 @@ def get_pipeline_summary() -> dict:
         })
 
     return {
-        "version": PIPELINE_DEFINITION["version"],
-        "global": PIPELINE_DEFINITION["global"],
+        "version": pipeline_def["version"],
+        "global": pipeline_def["global"],
         "stages": stages,
         "dispatch_bin": settings.dispatch_bin,
+        "has_overrides": _pipeline_path().is_file(),
     }

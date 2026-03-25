@@ -66,6 +66,19 @@ def create_ticket(
     return ticket
 
 
+def add_note(ticket_id: str, text: str, author: str = "human") -> dict | None:
+    """Append a note to a ticket's notes list. Returns updated ticket or None."""
+    tickets = _read_backlog()
+    for t in tickets:
+        if t["id"] == ticket_id:
+            if "notes" not in t:
+                t["notes"] = []
+            t["notes"].append({"text": text, "author": author, "timestamp": time.time()})
+            _write_backlog(tickets)
+            return t
+    return None
+
+
 def update_ticket(ticket_id: str, updates: dict) -> dict | None:
     """Update a ticket by ID. Returns updated ticket or None if not found."""
     tickets = _read_backlog()
