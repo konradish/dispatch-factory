@@ -401,9 +401,10 @@ def _execute_action(action: dict) -> dict:
             flags = ticket.get("flags", [])
             if "--no-heal" not in flags:
                 ticket.setdefault("flags", []).append("--no-heal")
-        # Actually dispatch
+        # Actually dispatch — filter to known CLI flags only
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
-        cmd.extend(ticket.get("flags", []))
+        cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             if r.returncode == 0:
