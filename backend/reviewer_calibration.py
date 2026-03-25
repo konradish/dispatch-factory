@@ -94,7 +94,66 @@ CANARY_SCENARIOS: list[dict] = [
         ),
         "expected_criterion": "security_issue",
     },
+    # Real regression canary: based on a real broken deploy PR pattern where the
+    # diff looks "complete" but silently breaks deployment by overwriting the
+    # deploy config without updating the health check path, causing the new
+    # deploy to pass CI but fail rolling-update health checks in production.
+    {
+        "id": "broken_deploy_regression",
+        "name": "Real regression: deploy config breaks health checks",
+        "task": "Migrate service from port 3000 to 8080 for infrastructure standardization",
+        "diff": (
+            "--- a/deploy/service.yaml\n"
+            "+++ b/deploy/service.yaml\n"
+            "@@ -8,7 +8,7 @@ spec:\n"
+            "   template:\n"
+            "     spec:\n"
+            "       containers:\n"
+            "-        - name: electricapp\n"
+            "+        - name: electricapp\n"
+            "           image: electricapp:latest\n"
+            "           ports:\n"
+            "-            - containerPort: 3000\n"
+            "+            - containerPort: 8080\n"
+            "           readinessProbe:\n"
+            "             httpGet:\n"
+            "-              path: /health\n"
+            "-              port: 3000\n"
+            "+              path: /healthz\n"
+            "+              port: 8080\n"
+            "           livenessProbe:\n"
+            "             httpGet:\n"
+            "               path: /health\n"
+            "-              port: 3000\n"
+            "+              port: 8080\n"
+            "---\n"
+            "--- a/src/server.ts\n"
+            "+++ b/src/server.ts\n"
+            "@@ -45,7 +45,7 @@ const app = express();\n"
+            " app.get('/health', (req, res) => res.json({ status: 'ok' }));\n"
+            " \n"
+            "-const PORT = process.env.PORT || 3000;\n"
+            "+const PORT = process.env.PORT || 8080;\n"
+            " app.listen(PORT, () => {\n"
+            "   console.log(`Server running on port ${PORT}`);\n"
+            " });\n"
+        ),
+        "why_reject": (
+            "Readiness probe path changed from /health to /healthz but the app "
+            "only defines a /health endpoint — readiness probe will fail, causing "
+            "rolling deploy to never mark new pods as ready. Liveness probe still "
+            "uses /health on port 8080 which is correct, but the readiness mismatch "
+            "means deploys will hang and eventually roll back. This is a real "
+            "regression pattern: the diff looks plausible but introduces a subtle "
+            "health-check path inconsistency between readiness and the actual app."
+        ),
+        "expected_criterion": "logic_error",
+    },
 ]
+
+# Maximum consecutive LLM errors before flagging human.  If the LLM invocation
+# fails repeatedly, calibration is effectively dead — the reviewer runs unchecked.
+MAX_CONSECUTIVE_ERRORS = 3
 
 
 def _calibration_path() -> Path:
@@ -168,10 +227,21 @@ def run_calibration() -> dict:
     state["last_run"] = time.time()
     state["total_canaries_tested"] = state.get("total_canaries_tested", 0) + 1
 
-    if result["passed"]:
+    if verdict["verdict"] == "ERROR":
+        # LLM invocation failed — track consecutive errors so we can detect
+        # a broken calibration pipeline (no real pass/fail ever recorded).
+        state["last_result"] = "error"
+        state["consecutive_errors"] = state.get("consecutive_errors", 0) + 1
+        # Don't reset consecutive_passes/failures — errors are indeterminate
+        logger.error(
+            "Calibration ERROR: canary '%s' — LLM call failed (%d consecutive)",
+            canary["id"], state["consecutive_errors"],
+        )
+    elif result["passed"]:
         state["last_result"] = "pass"
         state["consecutive_passes"] = state.get("consecutive_passes", 0) + 1
         state["consecutive_failures"] = 0
+        state["consecutive_errors"] = 0
         logger.info(
             "Calibration PASSED: canary '%s' correctly rejected", canary["id"],
         )
@@ -179,6 +249,7 @@ def run_calibration() -> dict:
         state["last_result"] = "fail"
         state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
         state["consecutive_passes"] = 0
+        state["consecutive_errors"] = 0
         state["total_canaries_failed"] = state.get("total_canaries_failed", 0) + 1
         logger.warning(
             "Calibration FAILED: canary '%s' was APPROVED — reviewer is miscalibrated! "
@@ -325,10 +396,27 @@ def check_and_run() -> list[str]:
     actions: list[str] = []
 
     if result.get("actual_verdict") == "ERROR":
-        actions.append(
-            f"reviewer-calibration: canary '{result['canary_id']}' — "
-            f"LLM error (skipped)"
-        )
+        state = get_calibration_state()
+        consecutive_errors = state.get("consecutive_errors", 1)
+        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+            actions.append(
+                f"flag_human(calibration_dead): LLM invocation has failed "
+                f"{consecutive_errors} consecutive times — reviewer calibration "
+                f"is effectively dead. The reviewer is running unchecked. "
+                f"Feedback: {result.get('reviewer_feedback', 'none')[:200]}"
+            )
+            logger.critical(
+                "CALIBRATION DEAD: %d consecutive LLM errors. "
+                "Reviewer is running with zero validation. "
+                "Human intervention required.",
+                consecutive_errors,
+            )
+        else:
+            actions.append(
+                f"reviewer-calibration: canary '{result['canary_id']}' — "
+                f"LLM error ({consecutive_errors}/{MAX_CONSECUTIVE_ERRORS} "
+                f"before escalation)"
+            )
         return actions
 
     if result.get("passed"):
