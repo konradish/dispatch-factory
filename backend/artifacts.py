@@ -479,6 +479,77 @@ def get_healer_effectiveness() -> dict:
     }
 
 
+def get_zombie_sessions() -> list[dict]:
+    """Find tmux sessions matching dispatch pattern but running bare shells (dead workers)."""
+    try:
+        result = subprocess.run(
+            ["tmux", "list-panes", "-a", "-F", "#{session_name}\t#{pane_current_command}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    import time
+    zombies = []
+    for line in result.stdout.strip().splitlines():
+        parts = line.strip().split("\t", 1)
+        if len(parts) != 2:
+            continue
+        name, cmd = parts
+        if SESSION_RE.match(name) and cmd in SHELL_COMMANDS:
+            log_path = _artifacts_path() / f"{name}.log"
+            age_minutes = 0
+            try:
+                age_minutes = int((time.time() - log_path.stat().st_mtime) / 60)
+            except OSError:
+                pass
+            zombies.append({"id": name, "command": cmd, "age_minutes": age_minutes})
+    return zombies
+
+
+def get_session_timeline(session_id: str) -> list[dict]:
+    """Return session artifacts as timeline events with file mtime timestamps."""
+    artifacts_dir = _artifacts_path()
+    if not artifacts_dir.is_dir():
+        return []
+    prefix = session_id
+    events: list[dict] = []
+    for entry in artifacts_dir.iterdir():
+        if not entry.name.startswith(prefix):
+            continue
+        suffix_part = entry.name[len(prefix):]
+        for suffix, name in ARTIFACT_TYPES.items():
+            if suffix_part == suffix:
+                try:
+                    mtime = entry.stat().st_mtime
+                except OSError:
+                    continue
+                data = _read_text(entry) if name == "result" else _read_json(entry)
+                events.append({"type": name, "timestamp": mtime, "data": data})
+                break
+    events.sort(key=lambda e: e["timestamp"])
+    return events
+
+
+def get_activity_feed(limit: int = 100) -> list[dict]:
+    """Merge factory log events with ticket lifecycle events."""
+    events = get_factory_log(limit=0)
+    import backlog as _backlog
+    for t in _backlog.list_tickets():
+        project = t.get("project", "unknown")
+        tid = t["id"]
+        if t.get("created_at"):
+            events.append({"timestamp": t["created_at"], "session": "", "project": project, "type": "ticket_created", "description": t.get("task", "")[:100], "ticket_id": tid})
+        if t.get("dispatched_at"):
+            events.append({"timestamp": t["dispatched_at"], "session": t.get("session_id", ""), "project": project, "type": "ticket_dispatched", "description": f"Dispatched -> {t.get('session_id', '?')}", "ticket_id": tid})
+        if t.get("completed_at"):
+            status = t.get("status", "completed")
+            events.append({"timestamp": t["completed_at"], "session": t.get("session_id", ""), "project": project, "type": f"ticket_{status}", "description": f"Ticket {status}", "ticket_id": tid})
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    return events[:limit]
+
+
 def get_factory_log(limit: int = 100) -> list[dict]:
     """Build a timeline of factory events from artifact files."""
     artifacts_dir = _artifacts_path()

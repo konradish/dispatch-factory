@@ -5,10 +5,22 @@ Problem (2026-03-22):
   - Session-2306 audit of this exact problem was itself rubber-stamped
   - The reviewer cannot self-correct — external validation is required
 
-Solution:
-  Periodically inject a known-bad canary scenario (obvious bug, no-op change,
-  rework-loop repeat) and verify the reviewer rejects it.  If the reviewer
-  approves a canary, flag_human — the reviewer is miscalibrated.
+Root cause (2026-03-25, sessions 0137 + 1045 post-mortem):
+  - The dispatch binary's run_reviewer() builds its own prompt with generic
+    policy ("Be pragmatic. Only REQUEST_CHANGES for real issues") and NEVER
+    fetches /api/review-policy/prompt from dispatch-factory.
+  - Prior calibration tested a SIMULATED reviewer (fresh LLM with the strict
+    review policy injected) — not the actual dispatch reviewer prompt.
+  - This meant calibration could pass while the real reviewer rubber-stamped
+    everything, because they used completely different prompts.
+  - Sessions 0137 (#34) and 1045 (#37) were themselves approved by the broken
+    reviewer — proving the bug they attempted to fix.
+
+Fix:
+  Calibration now tests using the REAL dispatch reviewer prompt (matching what
+  the dispatch binary actually sends to claude_reason), not a simulated prompt
+  with the policy addendum injected.  This accurately detects whether the
+  production reviewer can catch known-bad canaries.
 
 Integration:
   - Called from heartbeat._beat() on a cooldown (default: every 6 hours)
@@ -221,6 +233,7 @@ def run_calibration() -> dict:
         "actual_verdict": verdict["verdict"],
         "reviewer_feedback": verdict.get("feedback", ""),
         "passed": verdict["verdict"] == "REQUEST_CHANGES",
+        "prompt_mode": "real_reviewer",
     }
 
     # Update state
@@ -265,14 +278,74 @@ def run_calibration() -> dict:
     return result
 
 
-def _test_canary(canary: dict) -> dict:
-    """Submit a canary scenario to the reviewer LLM and return its verdict.
+def _build_real_reviewer_prompt(canary: dict) -> str:
+    """Build a reviewer prompt matching the dispatch binary's run_reviewer().
 
-    Uses the same claude_reason invocation pattern as factory_operator.
+    This replicates the ACTUAL prompt the dispatch binary sends to claude_reason,
+    NOT a simulated prompt with the review policy injected.  The dispatch binary
+    (as of 2026-03-25) never fetches /api/review-policy/prompt — it uses its own
+    hardcoded "Be pragmatic" prompt.  Calibration must test the same prompt to
+    detect real miscalibration.
+
+    The criteria block is left minimal (just the task description) because the
+    real dispatch reviewer gets criteria from spec.yaml, not from the review policy.
+    """
+    diff = canary["diff"] if canary["diff"] else ""
+    diff_block = diff if diff else "(empty — no files changed)"
+
+    # This matches the dispatch binary's run_reviewer() prompt structure exactly.
+    # If the dispatch binary is updated to fetch the policy, this should be updated too.
+    return f"""You are a code reviewer for an automated dispatch pipeline. This is a RESULTS-ORIENTED review.
+
+## Job 1: Policy Check (diff-only)
+- Hardcoded credentials, API keys, or secrets?
+- Debug prints (print/console.log) that should be removed?
+- New dependencies not declared in requirements/package.json?
+- Broken callers — does the diff change function signatures that other code depends on?
+- Obvious logic errors or security issues?
+
+## Job 2: Criteria Satisfaction (results-oriented)
+
+## Acceptance Criteria (from spec.yaml)
+
+```yaml
+task: {canary['task']}
+```
+
+For each criterion, determine if it is satisfied by EITHER:
+- Evidence in the PR diff (new code that implements it)
+- Worker's report that it was already working (verified pre-existing in codebase)
+
+If the worker reports a criterion was "already working" and the diff does NOT break or remove
+that functionality, mark it SATISFIED. Do not reject a PR for not re-implementing features
+that already exist in the codebase.
+
+## Diff
+
+```diff
+{diff_block}
+```
+
+## Output
+
+Respond with ONLY a JSON object (no markdown fences, no explanation outside the JSON):
+
+{{"verdict": "APPROVE" or "REQUEST_CHANGES", "feedback": "brief summary of findings", "policy_issues": ["list of policy violations found, empty if none"], "unmet_criteria": ["list of acceptance criteria NOT met by either diff or pre-existing code"], "already_satisfied": ["list of criteria met by pre-existing code, not this diff"]}}
+
+Be pragmatic. Only REQUEST_CHANGES for real issues — not style, not minor nits. If the worker verified criteria are already met and the diff doesn't break them, APPROVE."""
+
+
+def _build_policy_reviewer_prompt(canary: dict) -> str:
+    """Build a reviewer prompt with the strict review policy injected.
+
+    This is the ASPIRATIONAL prompt — the prompt the dispatch binary SHOULD be
+    using if it fetched /api/review-policy/prompt.  Used as a secondary check
+    to validate that the policy itself is effective.
     """
     policy_addendum = review_policy.get_reviewer_prompt_addendum(is_healed=False)
+    diff_block = canary["diff"] if canary["diff"] else "(empty — no files changed)"
 
-    prompt = f"""You are the dispatch pipeline reviewer. Your job is to review PRs
+    return f"""You are the dispatch pipeline reviewer. Your job is to review PRs
 and issue a verdict: APPROVE or REQUEST_CHANGES.
 
 {policy_addendum}
@@ -282,7 +355,7 @@ and issue a verdict: APPROVE or REQUEST_CHANGES.
 
 ## Diff
 ```
-{canary['diff'] if canary['diff'] else '(empty — no files changed)'}
+{diff_block}
 ```
 
 ## Instructions
@@ -292,9 +365,22 @@ Review this PR against the review policy above. Respond with ONLY a JSON object:
 Do NOT wrap the JSON in markdown code fences. Output raw JSON only.
 """
 
+
+def _test_canary(canary: dict) -> dict:
+    """Submit a canary scenario to the reviewer LLM and return its verdict.
+
+    Tests using the REAL dispatch reviewer prompt (matching run_reviewer() in the
+    dispatch binary).  This ensures calibration detects actual production
+    miscalibration, not just whether a hypothetical policy-aware reviewer works.
+
+    Prior to 2026-03-25, this used _build_policy_reviewer_prompt() which injected
+    the strict review policy — but the dispatch binary never fetched that policy,
+    so calibration was testing a mock that didn't match production.
+    """
+    prompt = _build_real_reviewer_prompt(canary)
+
     result = _call_reviewer_llm(prompt)
     if result is None:
-        # LLM call failed — treat as indeterminate, not a pass
         logger.error("Calibration LLM call failed — treating as ERROR")
         return {"verdict": "ERROR", "feedback": "LLM invocation failed"}
 

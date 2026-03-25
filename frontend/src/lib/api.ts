@@ -203,3 +203,19 @@ export function fetchProjectHealth(): Promise<
 > {
   return request<ProjectHealthEntry[]>("/api/project-health");
 }
+
+export interface ForemanResult {
+  lens: string;
+  assessment: string;
+  observations: string;
+  actions: { type: string; status: string; detail?: string; reason?: string; [key: string]: unknown }[];
+  raw_actions: unknown[];
+  timestamp: number;
+}
+
+export function foremanChat(message: string): Promise<ApiResult<ForemanResult>> {
+  return request<ForemanResult>("/api/foreman/chat", {
+    method: "POST",
+    body: JSON.stringify({ message }),
+  });
+}

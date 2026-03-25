@@ -178,7 +178,7 @@ These tickets are parked — waiting for human input, a time window, or an exter
     pipeline_overrides = " (HAS CUSTOM OVERRIDES)" if pipeline_summary.get("has_overrides") else ""
     pipeline_stations_brief = json.dumps([
         {"id": s["id"], "enabled": s["enabled"], "timeout": s.get("timeout")}
-        for s in pipeline_summary["stations"]
+        for s in pipeline_summary["stages"]
     ], indent=2)
 
     return f"""## Factory State Snapshot

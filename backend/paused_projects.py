@@ -27,16 +27,9 @@ logger = logging.getLogger("dispatch-factory.paused-projects")
 
 PAUSED_FILE = "paused-projects.json"
 
-# Projects that are paused/archived per the direction vector.
-# These are always treated as paused regardless of the runtime JSON state,
-# suppressing neglect alerts and preventing accidental dispatches.
-DEFAULT_PAUSED: dict[str, dict] = {
-    "electricapp": {"reason": "paused per direction vector"},
-    "voice-bridge": {"reason": "paused per direction vector"},
-    "movies": {"reason": "paused per direction vector"},
-    "blog": {"reason": "paused per direction vector"},
-    "schoolbrain": {"reason": "experimental — not yet in dispatch rotation (per direction vector)"},
-}
+# No hardcoded defaults. Paused state is managed entirely at runtime via
+# the foreman's pause_project/unpause_project actions, informed by the
+# direction vector. The JSON file is the sole source of truth.
 
 
 def _paused_path() -> Path:
@@ -44,20 +37,14 @@ def _paused_path() -> Path:
 
 
 def _read_state() -> dict[str, dict]:
-    """Read paused projects state. Keys are project names.
-
-    Merges DEFAULT_PAUSED with runtime JSON state.  Runtime entries take
-    precedence (so an operator can override reason/metadata), but default
-    projects are always present.
-    """
+    """Read paused projects state from runtime JSON. Keys are project names."""
     path = _paused_path()
-    runtime: dict[str, dict] = {}
     if path.is_file():
         try:
-            runtime = json.loads(path.read_text())
+            return json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
             pass
-    return {**DEFAULT_PAUSED, **runtime}
+    return {}
 
 
 def _write_state(state: dict[str, dict]) -> None:
