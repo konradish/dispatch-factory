@@ -159,6 +159,11 @@ async def lifespan(app: FastAPI):
     if not dispatch_path.is_file():
         logger.warning("dispatch binary not found at %s", dispatch_path)
 
+    # Initialize SQLite database (migrates from JSON on first run)
+    import db
+    db.init_db()
+    logger.info("  database:      %s", db._get_db_path())
+
     watcher_task = asyncio.create_task(_watch_artifacts())
     heartbeat_task = asyncio.create_task(heartbeat.heartbeat_loop(interval=30))
     yield

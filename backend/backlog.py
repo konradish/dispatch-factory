@@ -1,42 +1,27 @@
-"""Backlog ticket management — the factory's work queue."""
+"""Backlog ticket management — the factory's work queue.
+
+Backed by SQLite via db.py. Same public API as the original JSON version.
+"""
 
 from __future__ import annotations
 
 import json
 import time
 import uuid
-from pathlib import Path
 
-from config import settings
-
-BACKLOG_FILE = "factory-backlog.json"
-
-
-def _backlog_path() -> Path:
-    return Path(settings.artifacts_dir) / BACKLOG_FILE
-
-
-def _read_backlog() -> list[dict]:
-    path = _backlog_path()
-    if not path.is_file():
-        return []
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def _write_backlog(tickets: list[dict]) -> None:
-    path = _backlog_path()
-    path.write_text(json.dumps(tickets, indent=2))
+import db
 
 
 def list_tickets(status: str | None = None) -> list[dict]:
     """List all backlog tickets, optionally filtered by status."""
-    tickets = _read_backlog()
-    if status:
-        tickets = [t for t in tickets if t.get("status") == status]
-    return tickets
+    with db.get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM tickets WHERE status = ? ORDER BY created_at", (status,)
+            ).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM tickets ORDER BY created_at").fetchall()
+        return [db.row_to_ticket(r, db.get_ticket_notes(conn, r["id"])) for r in rows]
 
 
 def create_ticket(
@@ -45,51 +30,79 @@ def create_ticket(
     priority: str = "normal",
     flags: list[str] | None = None,
     source: str = "manual",
+    status: str = "pending",
 ) -> dict:
     """Create a new backlog ticket."""
-    ticket = {
-        "id": uuid.uuid4().hex[:8],
+    ticket_id = uuid.uuid4().hex[:8]
+    now = time.time()
+    with db.get_conn() as conn:
+        conn.execute(
+            """INSERT INTO tickets (id, task, project, priority, flags, tags, status, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ticket_id, task, project, priority, json.dumps(flags or []), "[]", status, source, now),
+        )
+    return {
+        "id": ticket_id,
         "task": task,
         "project": project,
-        "priority": priority,  # low, normal, high, urgent
+        "priority": priority,
         "flags": flags or [],
-        "status": "pending",  # intake, needs_input, ready, pending, dispatched, completed, failed, cancelled
-        "source": source,  # manual, heartbeat, auto
+        "tags": [],
+        "status": status,
+        "source": source,
+        "hold_reason": None,
+        "notes": [],
         "session_id": None,
-        "created_at": time.time(),
+        "created_at": now,
         "dispatched_at": None,
         "completed_at": None,
     }
-    tickets = _read_backlog()
-    tickets.append(ticket)
-    _write_backlog(tickets)
-    return ticket
 
 
 def add_note(ticket_id: str, text: str, author: str = "human") -> dict | None:
     """Append a note to a ticket's notes list. Returns updated ticket or None."""
-    tickets = _read_backlog()
-    for t in tickets:
-        if t["id"] == ticket_id:
-            if "notes" not in t:
-                t["notes"] = []
-            t["notes"].append({"text": text, "author": author, "timestamp": time.time()})
-            _write_backlog(tickets)
-            return t
-    return None
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if not row:
+            return None
+        conn.execute(
+            "INSERT INTO ticket_notes (ticket_id, text, author, timestamp) VALUES (?, ?, ?, ?)",
+            (ticket_id, text, author, time.time()),
+        )
+        notes = db.get_ticket_notes(conn, ticket_id)
+        return db.row_to_ticket(row, notes)
 
 
 def update_ticket(ticket_id: str, updates: dict) -> dict | None:
     """Update a ticket by ID. Returns updated ticket or None if not found."""
-    tickets = _read_backlog()
-    for t in tickets:
-        if t["id"] == ticket_id:
-            for k, v in updates.items():
-                if k in t and k != "id":
-                    t[k] = v
-            _write_backlog(tickets)
-            return t
-    return None
+    # Map of fields that need JSON serialization
+    json_fields = {"flags", "tags"}
+    allowed = {"task", "project", "priority", "flags", "tags", "status", "source",
+               "hold_reason", "session_id", "dispatched_at", "completed_at"}
+
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if not row:
+            return None
+
+        sets = []
+        vals = []
+        for k, v in updates.items():
+            if k in allowed:
+                if k in json_fields:
+                    sets.append(f"{k} = ?")
+                    vals.append(json.dumps(v))
+                else:
+                    sets.append(f"{k} = ?")
+                    vals.append(v)
+
+        if sets:
+            vals.append(ticket_id)
+            conn.execute(f"UPDATE tickets SET {', '.join(sets)} WHERE id = ?", vals)
+
+        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        notes = db.get_ticket_notes(conn, ticket_id)
+        return db.row_to_ticket(row, notes)
 
 
 def mark_dispatched(ticket_id: str, session_id: str) -> dict | None:
@@ -111,59 +124,62 @@ def mark_completed(ticket_id: str, status: str = "completed") -> dict | None:
 
 def next_pending(project: str | None = None) -> dict | None:
     """Get the highest-priority pending ticket, optionally for a specific project."""
-    tickets = _read_backlog()
-    pending = [t for t in tickets if t["status"] == "pending"]
-    if project:
-        pending = [t for t in pending if t["project"] == project]
-    if not pending:
-        return None
-
-    priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
-    pending.sort(key=lambda t: (priority_order.get(t.get("priority", "normal"), 2), t["created_at"]))
-    return pending[0]
+    with db.get_conn() as conn:
+        if project:
+            row = conn.execute(
+                """SELECT * FROM tickets WHERE status = 'pending' AND project = ?
+                   ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, created_at
+                   LIMIT 1""",
+                (project,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """SELECT * FROM tickets WHERE status = 'pending'
+                   ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, created_at
+                   LIMIT 1""",
+            ).fetchone()
+        if not row:
+            return None
+        return db.row_to_ticket(row, db.get_ticket_notes(conn, row["id"]))
 
 
 def has_inflight_ticket(project: str) -> bool:
     """Check if a project already has a dispatched (in-flight) ticket."""
-    dispatched = list_tickets(status="dispatched")
-    return any(t["project"] == project for t in dispatched)
+    with db.get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM tickets WHERE status = 'dispatched' AND project = ? LIMIT 1",
+            (project,),
+        ).fetchone()
+        return row is not None
 
 
 def has_eligible_higher_priority(priority: str) -> bool:
-    """Check if any pending tickets exist with strictly higher priority that are eligible for dispatch.
-
-    A pending ticket is eligible if its project is not circuit-broken and has no
-    in-flight ticket.  This prevents priority inversion: lower-priority work
-    should not consume capacity when higher-priority work is waiting.
-    """
+    """Check if any pending tickets exist with strictly higher priority that are eligible."""
     import circuit_breaker
 
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
     current_rank = priority_order.get(priority, 2)
     if current_rank == 0:
-        return False  # Nothing is higher than urgent
+        return False
 
-    pending = list_tickets(status="pending")
-    for t in pending:
-        t_rank = priority_order.get(t.get("priority", "normal"), 2)
-        if t_rank >= current_rank:
-            continue  # Not higher priority
-        # Check eligibility: project not blocked and no in-flight ticket
-        project = t["project"]
-        if has_inflight_ticket(project):
-            continue
-        if circuit_breaker.is_project_blocked(project):
-            continue
-        return True
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT * FROM tickets WHERE status = 'pending'").fetchall()
+        for r in rows:
+            t_rank = priority_order.get(r["priority"], 2)
+            if t_rank >= current_rank:
+                continue
+            project = r["project"]
+            if has_inflight_ticket(project):
+                continue
+            if circuit_breaker.is_project_blocked(project):
+                continue
+            return True
     return False
 
 
 def delete_ticket(ticket_id: str) -> bool:
     """Delete a ticket by ID."""
-    tickets = _read_backlog()
-    original_len = len(tickets)
-    tickets = [t for t in tickets if t["id"] != ticket_id]
-    if len(tickets) < original_len:
-        _write_backlog(tickets)
-        return True
-    return False
+    with db.get_conn() as conn:
+        conn.execute("DELETE FROM ticket_notes WHERE ticket_id = ?", (ticket_id,))
+        cursor = conn.execute("DELETE FROM tickets WHERE id = ?", (ticket_id,))
+        return cursor.rowcount > 0

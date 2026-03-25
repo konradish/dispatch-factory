@@ -101,55 +101,24 @@ def _detect_session_state(artifacts: dict[str, object]) -> str:
 
 
 def list_sessions() -> list[dict]:
-    """Scan artifacts directory and return a list of sessions with summary info."""
-    artifacts_dir = _artifacts_path()
-    if not artifacts_dir.is_dir():
-        return []
-
-    # Group files by session prefix.
-    sessions: dict[str, dict] = {}
-    for entry in artifacts_dir.iterdir():
-        m = SESSION_RE.match(entry.name)
-        if not m:
-            continue
-        session_id = m.group(1)
-        if session_id not in sessions:
-            parts = SESSION_PARTS_RE.match(session_id)
-            project = parts.group(1) if parts else "unknown"
-            session_type = "deploy" if session_id.startswith("deploy-") else "validate" if session_id.startswith("validate-") else "worker"
-            sessions[session_id] = {
-                "id": session_id,
-                "project": project,
-                "type": session_type,
-                "task": _extract_task(artifacts_dir, session_id),
-                "artifacts": {},
-                "has_log": False,
-            }
-
-        # Check for known artifact suffixes.
-        suffix_part = entry.name[len(session_id):]
-        for suffix, name in ARTIFACT_TYPES.items():
-            if suffix_part == suffix:
-                if name == "result":
-                    sessions[session_id]["artifacts"][name] = True  # Don't inline full markdown
-                else:
-                    sessions[session_id]["artifacts"][name] = _read_json(entry)
-                break
-
-        if suffix_part == ".log":
-            sessions[session_id]["has_log"] = True
-
-    # Compute state for each session.
-    result = []
-    for sid in sorted(sessions, reverse=True):
-        info = sessions[sid]
-        info["state"] = _detect_session_state(info["artifacts"])
-        # For the list view, strip bulky artifact bodies — keep just type keys.
-        info["artifact_types"] = list(info["artifacts"].keys())
-        del info["artifacts"]
-        result.append(info)
-
-    return result
+    """Return sessions from SQLite cache (fast)."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, project, type, task, state, has_log, artifact_types FROM sessions ORDER BY id DESC"
+        ).fetchall()
+    return [
+        {
+            "id": r["id"],
+            "project": r["project"],
+            "type": r["type"],
+            "task": r["task"],
+            "state": r["state"],
+            "has_log": bool(r["has_log"]),
+            "artifact_types": json.loads(r["artifact_types"]),
+        }
+        for r in rows
+    ]
 
 
 def get_session(session_id: str) -> dict | None:
@@ -293,104 +262,43 @@ def get_autopilot_state() -> dict | None:
 
 
 def list_sessions_with_timestamps() -> list[dict]:
-    """Like list_sessions but includes timestamps and artifact summaries for history view."""
-    artifacts_dir = _artifacts_path()
-    if not artifacts_dir.is_dir():
-        return []
-
-    sessions: dict[str, dict] = {}
-    for entry in artifacts_dir.iterdir():
-        m = SESSION_RE.match(entry.name)
-        if not m:
-            continue
-        session_id = m.group(1)
-        if session_id not in sessions:
-            parts = SESSION_PARTS_RE.match(session_id)
-            project = parts.group(1) if parts else "unknown"
-            session_type = "deploy" if session_id.startswith("deploy-") else "validate" if session_id.startswith("validate-") else "worker"
-            sessions[session_id] = {
-                "id": session_id,
-                "project": project,
-                "type": session_type,
-                "task": _extract_task(artifacts_dir, session_id),
-                "artifacts": {},
-                "has_log": False,
-                "mtime": 0.0,
-            }
-
-        suffix_part = entry.name[len(session_id):]
-
-        # Track latest mtime across all files for this session
-        try:
-            mt = entry.stat().st_mtime
-            if mt > sessions[session_id]["mtime"]:
-                sessions[session_id]["mtime"] = mt
-        except OSError:
-            pass
-
-        for suffix, name in ARTIFACT_TYPES.items():
-            if suffix_part == suffix:
-                data = _read_json(entry) if name != "result" else True
-                sessions[session_id]["artifacts"][name] = data
-                break
-
-        if suffix_part == ".log":
-            sessions[session_id]["has_log"] = True
-
-    result = []
-    for sid in sorted(sessions, key=lambda s: sessions[s]["mtime"], reverse=True):
-        info = sessions[sid]
-        info["state"] = _detect_session_state(info["artifacts"])
-
-        # Extract key facts from artifacts for the history view
-        reviewer = info["artifacts"].get("reviewer")
-        verifier = info["artifacts"].get("verifier")
-        healer = info["artifacts"].get("healer")
-        heal_verified = info["artifacts"].get("heal_verified")
-
-        info["summary"] = {
-            "verdict": reviewer.get("verdict", "") if isinstance(reviewer, dict) else "",
-            "feedback": (reviewer.get("feedback", "") if isinstance(reviewer, dict) else "")[:200],
-            "deploy_status": verifier.get("status", "") if isinstance(verifier, dict) else "",
-            "stages": verifier.get("stages", {}) if isinstance(verifier, dict) else {},
-            "healed": healer is not None,
-            "healer_action": healer.get("action", "") if isinstance(healer, dict) else "",
-            "healer_diagnosis": (healer.get("diagnosis", "") if isinstance(healer, dict) else "")[:200],
-            "heal_verified": heal_verified.get("status", "") if isinstance(heal_verified, dict) else "",
-        }
-
-        info["artifact_types"] = list(info["artifacts"].keys())
-        del info["artifacts"]
-        result.append(info)
-
-    return result
+    """Return sessions with timestamps and summaries from SQLite cache (fast)."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sessions ORDER BY mtime DESC"
+        ).fetchall()
+    return [db.row_to_session(r) for r in rows]
 
 
 def get_brief() -> dict:
-    """Build a brief: autopilot state + aggregate stats from recent sessions."""
+    """Build a brief: autopilot state + aggregate stats from SQLite cache."""
+    import db
     state = get_autopilot_state() or {}
-    sessions = list_sessions_with_timestamps()
 
-    # Aggregate stats
-    total = len(sessions)
-    deployed = sum(1 for s in sessions if s["state"] == "deployed")
-    completed = sum(1 for s in sessions if s["state"] == "completed")
-    failed = sum(1 for s in sessions if s["state"] in ("error", "rolled_back"))
-    healed = sum(1 for s in sessions if s.get("summary", {}).get("healed", False))
+    with db.get_conn() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        deployed = conn.execute("SELECT COUNT(*) FROM sessions WHERE state = 'deployed'").fetchone()[0]
+        completed = conn.execute("SELECT COUNT(*) FROM sessions WHERE state = 'completed'").fetchone()[0]
+        failed = conn.execute("SELECT COUNT(*) FROM sessions WHERE state IN ('error', 'rolled_back')").fetchone()[0]
+        healed = conn.execute("SELECT COUNT(*) FROM sessions WHERE summary LIKE '%\"healed\": true%'").fetchone()[0]
 
-    # Per-project breakdown
+    # Per-project breakdown via SQL
     projects: dict[str, dict] = {}
-    for s in sessions:
-        p = s["project"]
-        if p not in projects:
-            projects[p] = {"deployed": 0, "completed": 0, "failed": 0, "total": 0}
-        projects[p]["total"] += 1
-        if s["state"] == "deployed":
-            projects[p]["deployed"] += 1
-        elif s["state"] == "completed":
-            projects[p]["completed"] += 1
-        elif s["state"] in ("error", "rolled_back"):
-            projects[p]["failed"] += 1
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT project,
+                      COUNT(*) as total,
+                      SUM(CASE WHEN state = 'deployed' THEN 1 ELSE 0 END) as deployed,
+                      SUM(CASE WHEN state = 'completed' THEN 1 ELSE 0 END) as completed,
+                      SUM(CASE WHEN state IN ('error', 'rolled_back') THEN 1 ELSE 0 END) as failed
+               FROM sessions GROUP BY project"""
+        ).fetchall()
+    for r in rows:
+        projects[r["project"]] = {
+            "deployed": r["deployed"], "completed": r["completed"],
+            "failed": r["failed"], "total": r["total"],
+        }
 
     # Direction vector
     direction_file = _artifacts_path() / "autopilot-direction.md"
