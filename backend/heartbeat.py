@@ -548,7 +548,15 @@ def _auto_dispatch() -> list[str]:
             continue
         if circuit_breaker.is_project_blocked(ticket["project"]):
             blocked_projects.add(ticket["project"])
+            tags = ticket.get("tags", [])
             actions.append(f"circuit-breaker blocked dispatch for {ticket['id']} ({ticket['project']})")
+            logger.warning(
+                "Circuit breaker skipped ticket %s (%s) — tags: %s, priority: %s",
+                ticket["id"],
+                ticket["project"],
+                tags,
+                ticket.get("priority", "normal"),
+            )
             continue
 
         # Priority inversion guard: when this dispatch would fill the last slot,
