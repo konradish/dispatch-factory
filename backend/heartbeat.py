@@ -19,6 +19,7 @@ import artifacts
 import backlog
 import circuit_breaker
 import cleared_healed_sessions
+import healer_circuit_breaker
 import empty_backlog_detector
 import factory_idle_mode
 import meta_work_ratio
@@ -113,17 +114,17 @@ def _beat() -> list[str]:
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 8. Run operator (LLM reasoning with rotating lens)
+    # 8. Run foreman (LLM reasoning with rotating lens)
     if _state.get("auto_dispatch_enabled", False):
         try:
-            import factory_operator
-            result = factory_operator.run_operator()
+            import foreman
+            result = foreman.run_foreman()
             if result.get("actions"):
-                actions.append(f"operator[{result.get('lens', '?')}]: {len(result['actions'])} actions")
+                actions.append(f"foreman[{result.get('lens', '?')}]: {len(result['actions'])} actions")
             elif result.get("assessment"):
-                actions.append(f"operator[{result.get('lens', '?')}]: {result['assessment'][:80]}")
+                actions.append(f"foreman[{result.get('lens', '?')}]: {result['assessment'][:80]}")
         except Exception as e:
-            actions.append(f"operator error: {e}")
+            actions.append(f"foreman error: {e}")
 
     return actions
 
@@ -151,11 +152,13 @@ def _reconcile_backlog() -> list[str]:
             if healed:
                 # Post-heal verification: don't trust DEPLOYED status after
                 # healer intervention — run a health check first.
+                actions.extend(healer_circuit_breaker.record_healer_intervention(project, session_id))
                 actions.extend(_verify_healed_deploy(session, project, session_id, ticket))
             else:
                 backlog.mark_completed(ticket["id"], "completed")
                 actions.append(f"ticket {ticket['id']} completed ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=True))
+                actions.extend(healer_circuit_breaker.record_successful_deploy(project))
         elif state == "completed":
             # "completed" means result.md exists but verifier didn't report DEPLOYED.
             # If the session was healed, this is suspicious — the healer may have
@@ -163,6 +166,7 @@ def _reconcile_backlog() -> list[str]:
             # failure to prevent false confidence.
             healed = _session_was_healed(session)
             if healed:
+                actions.extend(healer_circuit_breaker.record_healer_intervention(project, session_id))
                 backlog.mark_completed(ticket["id"], "failed")
                 actions.append(f"ticket {ticket['id']} healed-but-unverified ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=False))
@@ -171,7 +175,11 @@ def _reconcile_backlog() -> list[str]:
                 backlog.mark_completed(ticket["id"], "completed")
                 actions.append(f"ticket {ticket['id']} completed ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=True))
+                actions.extend(healer_circuit_breaker.record_successful_deploy(project))
         elif state in ("error", "rolled_back"):
+            healed = _session_was_healed(session)
+            if healed:
+                actions.extend(healer_circuit_breaker.record_healer_intervention(project, session_id))
             backlog.mark_completed(ticket["id"], "failed")
             label = "rolled back" if state == "rolled_back" else "failed"
             actions.append(f"ticket {ticket['id']} {label} ({session_id})")
@@ -206,12 +214,12 @@ def _escalate_healed_unverified(session: dict, project: str, session_id: str) ->
 
     verifier = session.get("artifacts", {}).get("verifier", {})
     deploy_status = verifier.get("status", "unknown") if isinstance(verifier, dict) else "missing"
-    stages = verifier.get("stages", {}) if isinstance(verifier, dict) else {}
+    stations = verifier.get("stations", verifier.get("stages", {})) if isinstance(verifier, dict) else {}
 
     task = (
         f"Post-heal deploy verification FAILED: {project} session {session_id} "
         f"was healed ({action}) but deploy was never verified "
-        f"(verifier status: {deploy_status}, stages: {stages}). "
+        f"(verifier status: {deploy_status}, stations: {stations}). "
         f"Healer diagnosis: {diagnosis}"
     )
 
@@ -441,7 +449,7 @@ def _check_empty_backlog() -> list[str]:
         empty_backlog_detector.record_flag(project)
         logger.warning(
             "Empty backlog + HUMAN INPUT NEEDED: %s has no pending tickets "
-            "and direction vector requests human input — flagging operator",
+            "and direction vector requests human input — flagging foreman",
             project,
         )
         actions.append(
@@ -492,12 +500,18 @@ def _sweep_orphaned_healed_sessions() -> list[str]:
 
 
 def _auto_dispatch() -> list[str]:
-    """Auto-dispatch pending tickets if worker capacity is available."""
+    """Auto-dispatch pending/ready tickets if worker capacity is available."""
     actions = []
 
     # Factory idle mode: hard stop — no dispatches when all projects need human input
     if factory_idle_mode.is_idle():
         actions.append("factory_idle: all active projects need human input — dispatch blocked")
+        return actions
+
+    # Reviewer calibration gate: block all dispatches if reviewer is miscalibrated
+    cal_state = reviewer_calibration.get_calibration_state()
+    if cal_state.get("consecutive_failures", 0) > 0:
+        actions.append("reviewer_miscalibrated: dispatch blocked until calibration passes")
         return actions
 
     active = artifacts.get_active_sessions()
@@ -509,7 +523,7 @@ def _auto_dispatch() -> list[str]:
     blocked_projects: set[str] = set()
     slots = max_concurrent - len(active)
     dispatched_count = 0
-    pending = backlog.list_tickets(status="pending")
+    pending = backlog.list_tickets(status="pending") + backlog.list_tickets(status="ready")
 
     # Sort by priority like next_pending does
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
@@ -543,6 +557,12 @@ def _auto_dispatch() -> list[str]:
         if remaining_slots <= 1 and backlog.has_eligible_higher_priority(ticket.get("priority", "normal")):
             actions.append(f"priority_inversion_prevented: {ticket['id']} ({ticket.get('priority', 'normal')}) — higher-priority tickets pending")
             continue
+
+        # Healer circuit breaker: disable healer for projects in spiral
+        if healer_circuit_breaker.is_healer_blocked(ticket["project"]):
+            if "--no-heal" not in ticket.get("flags", []):
+                ticket.setdefault("flags", []).append("--no-heal")
+            actions.append(f"healer-circuit-breaker: {ticket['id']} dispatched with --no-heal ({ticket['project']})")
 
         # Dispatch via CLI
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
