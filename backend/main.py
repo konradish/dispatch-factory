@@ -579,8 +579,8 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
     if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
         raise HTTPException(
             status_code=409,
-            detail="Meta-work ratio exceeded — more than 60% of recent sessions are "
-            "dispatch-factory. Dispatch a product session first, or use high priority.",
+            detail="Meta-work ratio exceeded — 60% or more of recent sessions are "
+            "dispatch-factory. Dispatch a product session first, or escalate to urgent (human only).",
         )
 
     # Priority inversion guard: block lower-priority dispatch when eligible
