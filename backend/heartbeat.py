@@ -110,6 +110,14 @@ def _beat() -> list[str]:
     # 6. Reviewer calibration: test canary scenarios on cooldown
     actions.extend(reviewer_calibration.check_and_run())
 
+    # 6b. Process completed workers (post-worker pipeline stages)
+    try:
+        import pipeline_runner
+        for completion in pipeline_runner.scan_for_completions():
+            actions.extend(pipeline_runner.process_worker_completion(completion))
+    except Exception as e:
+        actions.append(f"pipeline_runner error: {e}")
+
     # 7. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())

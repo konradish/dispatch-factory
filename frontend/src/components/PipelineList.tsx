@@ -1,10 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { SessionSummary, ActiveSession } from "@/types";
 import {
   fetchSessions,
   fetchActiveSessions,
   holdSession,
   attachTerminal,
+  fetchSessionOutput,
 } from "@/lib/api";
 import { useFactorySocket } from "@/lib/useFactorySocket";
 import { useNotifications } from "@/lib/useNotifications";
@@ -61,6 +62,33 @@ function StageProgress({ artifactTypes }: { artifactTypes: string[] }) {
         {PIPELINE_STAGES.filter((s) => artifactTypes.includes(s)).length}/
         {PIPELINE_STAGES.length}
       </span>
+    </div>
+  );
+}
+
+function LiveOutput({ sessionId }: { sessionId: string }) {
+  const [lines, setLines] = useState<string[]>([]);
+
+  useEffect(() => {
+    let mounted = true;
+    const poll = async () => {
+      const result = await fetchSessionOutput(sessionId, 15);
+      if (mounted && result.data) {
+        setLines(result.data.lines.filter((l) => l.trim()));
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 3000);
+    return () => { mounted = false; clearInterval(interval); };
+  }, [sessionId]);
+
+  if (lines.length === 0) return null;
+
+  return (
+    <div className="mt-3 bg-bg-base rounded border border-gray-800 p-2 max-h-48 overflow-y-auto">
+      <pre className="text-[11px] mono text-gray-400 leading-relaxed whitespace-pre-wrap">
+        {lines.join("\n")}
+      </pre>
     </div>
   );
 }
@@ -214,6 +242,8 @@ export default function PipelineList({ onAttachTerminal, onSelectSession }: Pipe
                       {session.type}
                     </span>
                   </div>
+
+                  {inTmux && <LiveOutput sessionId={session.id} />}
 
                   {inTmux && (
                     <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">

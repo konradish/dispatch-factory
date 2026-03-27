@@ -219,3 +219,14 @@ export function foremanChat(message: string): Promise<ApiResult<ForemanResult>> 
     body: JSON.stringify({ message }),
   });
 }
+
+// Session live output
+export interface SessionOutput {
+  session_id: string;
+  lines: string[];
+  alive: boolean;
+}
+
+export function fetchSessionOutput(id: string, lines = 20): Promise<ApiResult<SessionOutput>> {
+  return request<SessionOutput>(`/api/sessions/${id}/output?lines=${lines}`);
+}

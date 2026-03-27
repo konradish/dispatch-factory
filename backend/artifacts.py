@@ -22,6 +22,7 @@ ARTIFACT_TYPES: dict[str, str] = {
     "-abandoned.json": "abandoned",
     "-result.md": "result",
     "-validate.json": "validate",
+    "-worker-done.json": "worker_done",
 }
 
 # Pattern that matches session prefixes in filenames.

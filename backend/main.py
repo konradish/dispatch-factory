@@ -330,6 +330,27 @@ async def create_ticket(req: TicketRequest) -> dict[str, str]:
     }
 
 
+@app.get("/api/sessions/{session_id}/output")
+async def get_session_output(session_id: str, lines: int = 20) -> dict:
+    """Return last N lines of live tmux output for a running session."""
+    _validate_session_id(session_id)
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_id, "-p", "-S", str(-lines)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            # Strip ANSI escape codes for clean display
+            import re
+            clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', result.stdout)
+            # Remove empty trailing lines
+            output_lines = clean.rstrip().split("\n")
+            return {"session_id": session_id, "lines": output_lines, "alive": True}
+        return {"session_id": session_id, "lines": [], "alive": False}
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"session_id": session_id, "lines": [], "alive": False}
+
+
 @app.post("/api/sessions/{session_id}/hold")
 async def hold_session(session_id: str) -> dict[str, str]:
     _require_controls()
