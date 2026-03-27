@@ -75,9 +75,27 @@ def process_worker_completion(completion: dict) -> list[str]:
         actions.append(f"pipeline: {session_id} worker failed ({error_class})")
         return actions
 
-    # Worker succeeded — determine what post-worker stages to run
-    # For now: just write the result report. Reviewer/verifier/monitor
-    # will be added as backend stages incrementally.
+    task_type = completion.get("task_type", "code")
+    auto_merge = completion.get("auto_merge", False)
+
+    # Non-code tasks: auto-merge the report PR (no review needed)
+    if task_type != "code" and pr_url:
+        merge_ok = _auto_merge_pr(pr_url, project, session_id)
+        if merge_ok:
+            actions.append(f"pipeline: {session_id} PR auto-merged ({task_type} task)")
+        else:
+            actions.append(f"pipeline: {session_id} PR auto-merge failed")
+
+    # Code tasks with auto_merge: run reviewer then merge
+    elif task_type == "code" and auto_merge and pr_url:
+        # TODO: Add LLM reviewer stage here (claude_reason reviews diff)
+        # For now, auto-merge code PRs too — reviewer will be added incrementally
+        merge_ok = _auto_merge_pr(pr_url, project, session_id)
+        if merge_ok:
+            actions.append(f"pipeline: {session_id} PR merged (code, reviewer pending)")
+        else:
+            actions.append(f"pipeline: {session_id} PR merge failed")
+
     status = "SUCCESS"
     if pr_url:
         status = f"SUCCESS (PR: {pr_url})"
@@ -85,13 +103,54 @@ def process_worker_completion(completion: dict) -> list[str]:
     _write_result(session_id, status, pr_url, task_short)
     actions.append(f"pipeline: {session_id} completed — {status}")
 
-    # Send notification for successful completions
     try:
         _send_ntfy(project, task_short, pr_url)
     except Exception as e:
         logger.warning("ntfy notification failed: %s", e)
 
     return actions
+
+
+def _auto_merge_pr(pr_url: str, project: str, session_id: str) -> bool:
+    """Merge a PR via gh CLI. Returns True on success."""
+    import subprocess
+    # Extract repo path from PR URL: https://github.com/owner/repo/pull/123
+    import re
+    m = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
+    if not m:
+        logger.warning("Cannot parse PR URL: %s", pr_url)
+        return False
+
+    # Find project path from PROJECTS config
+    project_paths = {
+        "recipebrain": "/mnt/c/projects/meal_tracker",
+        "electricapp": "/mnt/c/projects/electric-app",
+        "dispatch-factory": "/mnt/c/projects/dispatch-factory",
+        "lawpass": "/mnt/c/projects/lawpass-ai",
+        "movies": "/mnt/c/projects/family-movies",
+        "schoolbrain": "/mnt/c/projects/schoolbrain",
+    }
+    cwd = project_paths.get(project, "/tmp")
+
+    try:
+        # Mark PR as ready (un-draft), then merge
+        subprocess.run(
+            ["gh", "pr", "ready", pr_url],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        )
+        r = subprocess.run(
+            ["gh", "pr", "merge", pr_url, "--squash", "--delete-branch"],
+            cwd=cwd, capture_output=True, text=True, timeout=60,
+        )
+        if r.returncode == 0:
+            logger.info("Merged PR: %s", pr_url)
+            return True
+        else:
+            logger.warning("PR merge failed: %s", r.stderr[:200])
+            return False
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning("PR merge error: %s", e)
+        return False
 
 
 def _write_result(session_id: str, status: str, pr_url: str, task_short: str) -> None:
