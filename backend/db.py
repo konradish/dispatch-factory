@@ -51,6 +51,12 @@ def init_db() -> None:
     """Create tables if they don't exist, then migrate from JSON if needed."""
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        # Add task_type column if missing (migration for existing DBs)
+        try:
+            conn.execute("SELECT task_type FROM tickets LIMIT 1")
+        except Exception:
+            conn.execute("ALTER TABLE tickets ADD COLUMN task_type TEXT NOT NULL DEFAULT 'code'")
+            logger.info("Added task_type column to tickets table")
     _migrate_from_json()
     _migrate_sessions_from_disk()
 
@@ -61,6 +67,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     task TEXT NOT NULL,
     project TEXT NOT NULL,
     priority TEXT NOT NULL DEFAULT 'normal',
+    task_type TEXT NOT NULL DEFAULT 'code',
     flags TEXT NOT NULL DEFAULT '[]',
     tags TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending',

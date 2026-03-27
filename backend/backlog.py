@@ -31,21 +31,23 @@ def create_ticket(
     flags: list[str] | None = None,
     source: str = "manual",
     status: str = "pending",
+    task_type: str = "code",
 ) -> dict:
     """Create a new backlog ticket."""
     ticket_id = uuid.uuid4().hex[:8]
     now = time.time()
     with db.get_conn() as conn:
         conn.execute(
-            """INSERT INTO tickets (id, task, project, priority, flags, tags, status, source, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (ticket_id, task, project, priority, json.dumps(flags or []), "[]", status, source, now),
+            """INSERT INTO tickets (id, task, project, priority, task_type, flags, tags, status, source, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (ticket_id, task, project, priority, task_type, json.dumps(flags or []), "[]", status, source, now),
         )
     return {
         "id": ticket_id,
         "task": task,
         "project": project,
         "priority": priority,
+        "task_type": task_type,
         "flags": flags or [],
         "tags": [],
         "status": status,
@@ -77,7 +79,7 @@ def update_ticket(ticket_id: str, updates: dict) -> dict | None:
     """Update a ticket by ID. Returns updated ticket or None if not found."""
     # Map of fields that need JSON serialization
     json_fields = {"flags", "tags"}
-    allowed = {"task", "project", "priority", "flags", "tags", "status", "source",
+    allowed = {"task", "project", "priority", "task_type", "flags", "tags", "status", "source",
                "hold_reason", "session_id", "dispatched_at", "completed_at"}
 
     with db.get_conn() as conn:

@@ -588,6 +588,10 @@ def _auto_dispatch() -> list[str]:
         # Dispatch via CLI — filter to known CLI flags only
         valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
+        # Pass task type if set
+        task_type = ticket.get("task_type", "code")
+        if task_type != "code":
+            cmd.extend(["--type", task_type])
         cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
 
         try:
