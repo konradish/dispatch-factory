@@ -100,9 +100,107 @@ def _detect_session_state(artifacts: dict[str, object]) -> str:
     return "running"
 
 
-def list_sessions() -> list[dict]:
-    """Return sessions from SQLite cache (fast)."""
+def _refresh_new_sessions() -> None:
+    """Check for sessions on disk not yet in the cache and add them."""
     import db
+    import time as _time
+    artifacts_dir = _artifacts_path()
+    if not artifacts_dir.is_dir():
+        return
+
+    with db.get_conn() as conn:
+        cached_ids = {r[0] for r in conn.execute("SELECT id FROM sessions").fetchall()}
+
+    # Scan for .log files (each represents a session)
+    new_sessions = []
+    for entry in artifacts_dir.iterdir():
+        if not entry.name.endswith(".log"):
+            continue
+        m = SESSION_RE.match(entry.name)
+        if not m:
+            continue
+        session_id = m.group(1)
+        if session_id in cached_ids:
+            continue
+        # New session — add to cache
+        parts = SESSION_PARTS_RE.match(session_id)
+        project = parts.group(1) if parts else "unknown"
+        stype = "deploy" if session_id.startswith("deploy-") else "validate" if session_id.startswith("validate-") else "worker"
+        task = _extract_task(artifacts_dir, session_id)
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            mtime = _time.time()
+        new_sessions.append((session_id, project, stype, task, "running", 1, mtime, "[]", "{}", _time.time()))
+
+    if new_sessions:
+        with db.get_conn() as conn:
+            conn.executemany(
+                """INSERT OR IGNORE INTO sessions (id, project, type, task, state, has_log, mtime, artifact_types, summary, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                new_sessions,
+            )
+
+
+def _update_session_state(session_id: str) -> None:
+    """Re-scan artifacts for a single session and update its cache entry."""
+    import db
+    import time as _time
+    artifacts_dir = _artifacts_path()
+    if not artifacts_dir.is_dir():
+        return
+
+    artifact_types = []
+    artifacts_data: dict = {}
+    has_log = False
+    mtime = 0.0
+
+    for entry in artifacts_dir.iterdir():
+        if not entry.name.startswith(session_id):
+            continue
+        suffix_part = entry.name[len(session_id):]
+        try:
+            mt = entry.stat().st_mtime
+            if mt > mtime:
+                mtime = mt
+        except OSError:
+            pass
+        for suffix, name in ARTIFACT_TYPES.items():
+            if suffix_part == suffix:
+                artifact_types.append(name)
+                if name != "result":
+                    artifacts_data[name] = _read_json(entry)
+                break
+        if suffix_part == ".log":
+            has_log = True
+
+    state = _detect_session_state(artifacts_data)
+
+    # Build summary
+    reviewer = artifacts_data.get("reviewer")
+    verifier = artifacts_data.get("verifier")
+    healer = artifacts_data.get("healer")
+    heal_verified = artifacts_data.get("heal_verified")
+    summary = {
+        "verdict": reviewer.get("verdict", "") if isinstance(reviewer, dict) else "",
+        "deploy_status": verifier.get("status", "") if isinstance(verifier, dict) else "",
+        "healed": healer is not None,
+        "healer_action": healer.get("action", "") if isinstance(healer, dict) else "",
+        "heal_verified": heal_verified.get("status", "") if isinstance(heal_verified, dict) else "",
+    }
+
+    with db.get_conn() as conn:
+        conn.execute(
+            """UPDATE sessions SET state=?, has_log=?, mtime=?, artifact_types=?, summary=?, updated_at=?
+               WHERE id=?""",
+            (state, int(has_log), mtime, json.dumps(artifact_types), json.dumps(summary), _time.time(), session_id),
+        )
+
+
+def list_sessions() -> list[dict]:
+    """Return sessions from SQLite cache, refreshing new sessions first."""
+    import db
+    _refresh_new_sessions()
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT id, project, type, task, state, has_log, artifact_types FROM sessions ORDER BY id DESC"
@@ -264,6 +362,12 @@ def get_autopilot_state() -> dict | None:
 def list_sessions_with_timestamps() -> list[dict]:
     """Return sessions with timestamps and summaries from SQLite cache (fast)."""
     import db
+    _refresh_new_sessions()
+    # Also refresh state for recent running sessions
+    with db.get_conn() as conn:
+        running = conn.execute("SELECT id FROM sessions WHERE state = 'running' LIMIT 10").fetchall()
+    for r in running:
+        _update_session_state(r["id"])
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM sessions ORDER BY mtime DESC"
