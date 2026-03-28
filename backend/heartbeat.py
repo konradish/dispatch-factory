@@ -219,6 +219,10 @@ def _reconcile_backlog() -> list[str]:
             backlog.mark_completed(ticket["id"], "failed")
             actions.append(f"ticket {ticket['id']} abandoned ({session_id})")
             actions.extend(circuit_breaker.record_result(project, success=False))
+        elif state == "worker_done":
+            # Worker finished but result.md not yet written by process_worker_completion.
+            # Skip — let scan_for_completions handle it on the next heartbeat cycle.
+            logger.warning("ticket %s session %s in worker_done — deferring to next cycle", ticket["id"], session_id)
 
     return actions
 
