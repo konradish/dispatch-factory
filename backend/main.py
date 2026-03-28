@@ -653,8 +653,6 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     _require_controls()
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
-    from config import update_heartbeat_config
-    update_heartbeat_config(auto_dispatch=enabled, max_concurrent=max_concurrent)
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
 
 
