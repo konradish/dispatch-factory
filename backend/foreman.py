@@ -31,6 +31,29 @@ PROMPTS_DIR = Path(__file__).parent / "foreman-prompts"
 # Rotation state
 _rotation_index = 0
 _last_result: dict = {}
+_active_stream_path: str | None = None
+
+
+def get_stream_events(after_line: int = 0) -> tuple[list[dict], int]:
+    """Read new events from the foreman's active stream file. Returns (events, next_line)."""
+    if not _active_stream_path:
+        return [], after_line
+    try:
+        path = Path(_active_stream_path)
+        if not path.is_file():
+            return [], after_line
+        lines = path.read_text().strip().split("\n")
+        new_lines = lines[after_line:]
+        events = []
+        for line in new_lines:
+            if line.strip():
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        return events, len(lines)
+    except OSError:
+        return [], after_line
 
 
 def list_lenses() -> list[dict]:
@@ -308,10 +331,11 @@ async def main():
     out_path = sys.argv[2]
     max_turns = int(sys.argv[3])
     cwd = sys.argv[4] if len(sys.argv) > 4 else None
+    stream_path = sys.argv[5] if len(sys.argv) > 5 else None
 
     prompt = pathlib.Path(prompt_path).read_text()
 
-    from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+    from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock, ToolUseBlock, ToolResultMessage
     options = ClaudeAgentOptions(
         max_turns=max_turns,
         cwd=cwd,
@@ -320,16 +344,34 @@ async def main():
 
     result_parts = []
     result_fallback = None
+    sf = open(stream_path, "a") if stream_path else None
+
     async for msg in query(prompt=prompt, options=options):
         if isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, TextBlock):
                     result_parts.append(block.text)
+                    if sf:
+                        sf.write(json.dumps({"type": "text", "content": block.text[:200]}) + chr(10))
+                        sf.flush()
+                elif hasattr(block, "name"):
+                    if sf:
+                        tool_input = getattr(block, "input", {})
+                        summary = str(tool_input)[:100] if tool_input else ""
+                        sf.write(json.dumps({"type": "tool_use", "tool": block.name, "summary": summary}) + chr(10))
+                        sf.flush()
+        elif isinstance(msg, ToolResultMessage):
+            if sf:
+                sf.write(json.dumps({"type": "tool_result", "content": "done"}) + chr(10))
+                sf.flush()
         if type(msg).__name__ == 'ResultMessage' and hasattr(msg, 'result'):
             result_fallback = msg.result
 
     text = chr(10).join(result_parts) if result_parts else (result_fallback or '')
     pathlib.Path(out_path).write_text(json.dumps({"response": text}))
+    if sf:
+        sf.write(json.dumps({"type": "done"}) + chr(10))
+        sf.close()
 
 asyncio.run(main())
 """
@@ -341,10 +383,15 @@ asyncio.run(main())
         pf.write(prompt)
         prompt_path = pf.name
     out_path = tempfile.mktemp(suffix=".json")
+    stream_path = tempfile.mktemp(suffix=".jsonl")
+
+    # Store stream path so the API can read it
+    global _active_stream_path
+    _active_stream_path = stream_path
 
     try:
         r = subprocess.run(
-            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "100", factory_dir],
+            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "100", factory_dir, stream_path],
             capture_output=True, text=True, timeout=600, env=env,
         )
 
@@ -396,7 +443,8 @@ asyncio.run(main())
         logger.error("Foreman LLM error: %s", e)
         return None
     finally:
-        for p in [script_path, prompt_path, out_path]:
+        _active_stream_path = None
+        for p in [script_path, prompt_path, out_path, stream_path]:
             try:
                 Path(p).unlink(missing_ok=True)
             except OSError:

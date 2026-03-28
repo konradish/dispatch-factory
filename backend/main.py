@@ -1027,6 +1027,13 @@ async def run_foreman_now(lens_id: str | None = None) -> dict:
     return foreman.run_foreman(lens_id=lens_id)
 
 
+@app.get("/api/foreman/stream")
+async def foreman_stream(after: int = 0) -> dict:
+    """Poll for foreman thinking events (tool calls, intermediate text)."""
+    events, next_line = foreman.get_stream_events(after_line=after)
+    return {"events": events, "next": next_line}
+
+
 @app.get("/api/foreman/threads")
 async def list_foreman_threads() -> list[dict]:
     """Return all chat threads."""

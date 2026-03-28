@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { foremanChat, fetchChatHistory, fetchThreads, createThread } from "@/lib/api";
-import type { ForemanResult, ChatThread } from "@/lib/api";
+import { foremanChat, fetchChatHistory, fetchThreads, createThread, fetchForemanStream } from "@/lib/api";
+import type { ForemanResult, ChatThread, StreamEvent } from "@/lib/api";
 
 interface Message {
   role: "human" | "foreman";
@@ -33,14 +33,33 @@ export default function ForemanChat({ visible, onClose }: ForemanChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streamEvents, setStreamEvents] = useState<StreamEvent[]>([]);
   const [showThreads, setShowThreads] = useState(false);
+  const streamLineRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages or stream events
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [messages]);
+  }, [messages, streamEvents]);
+
+  // Poll stream events while foreman is thinking
+  useEffect(() => {
+    if (!sending) {
+      setStreamEvents([]);
+      streamLineRef.current = 0;
+      return;
+    }
+    const interval = setInterval(async () => {
+      const r = await fetchForemanStream(streamLineRef.current);
+      if (r.data && r.data.events.length > 0) {
+        setStreamEvents((prev) => [...prev, ...r.data!.events]);
+        streamLineRef.current = r.data.next;
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [sending]);
 
   // Focus input when panel opens
   useEffect(() => {
@@ -77,6 +96,7 @@ export default function ForemanChat({ visible, onClose }: ForemanChatProps) {
     setMessages((prev) => [...prev, { role: "human", text, timestamp: Date.now() / 1000 }]);
     const result = await foremanChat(text, activeThreadId);
     setSending(false);
+    setStreamEvents([]);
     if (result.data) {
       setMessages((prev) => [...prev, {
         role: "foreman",
@@ -217,10 +237,29 @@ export default function ForemanChat({ visible, onClose }: ForemanChatProps) {
           </div>
         ))}
         {sending && (
-          <div className="flex justify-end">
-            <div className="bg-accent-purple/10 border border-accent-purple/20 rounded-lg px-3 py-2 flex items-center gap-2">
-              <div className="h-3 w-3 border-2 border-accent-purple/30 border-t-accent-purple rounded-full animate-spin" />
-              <span className="text-xs text-accent-purple">Thinking...</span>
+          <div className="flex flex-col items-end gap-1">
+            <div className="max-w-[85%] bg-accent-purple/10 border border-accent-purple/20 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2 mb-1">
+                <div className="h-3 w-3 border-2 border-accent-purple/30 border-t-accent-purple rounded-full animate-spin" />
+                <span className="text-xs text-accent-purple">Foreman working...</span>
+              </div>
+              {streamEvents.length > 0 && (
+                <div className="space-y-0.5 mt-1">
+                  {streamEvents.slice(-8).map((ev, i) => (
+                    <div key={i} className="text-[10px] mono text-gray-500">
+                      {ev.type === "tool_use" && (
+                        <span><span className="text-accent-cyan">{ev.tool}</span> {ev.summary?.slice(0, 60)}</span>
+                      )}
+                      {ev.type === "tool_result" && (
+                        <span className="text-gray-600">done</span>
+                      )}
+                      {ev.type === "text" && (
+                        <span className="text-gray-400">{ev.content?.slice(0, 80)}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

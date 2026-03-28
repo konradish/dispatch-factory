@@ -248,6 +248,17 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface StreamEvent {
+  type: "text" | "tool_use" | "tool_result" | "done";
+  content?: string;
+  tool?: string;
+  summary?: string;
+}
+
+export function fetchForemanStream(after = 0): Promise<ApiResult<{ events: StreamEvent[]; next: number }>> {
+  return request<{ events: StreamEvent[]; next: number }>(`/api/foreman/stream?after=${after}`);
+}
+
 export function fetchThreads(): Promise<ApiResult<ChatThread[]>> {
   return request<ChatThread[]>("/api/foreman/threads");
 }
