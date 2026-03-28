@@ -334,7 +334,7 @@ async def main():
 
     prompt = pathlib.Path(prompt_path).read_text()
 
-    from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock, ToolUseBlock, ToolResultMessage
+    from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
     options = ClaudeAgentOptions(
         max_turns=max_turns,
         cwd=cwd,
@@ -359,7 +359,7 @@ async def main():
                         summary = str(tool_input)[:100] if tool_input else ""
                         sf.write(json.dumps({"type": "tool_use", "tool": block.name, "summary": summary}) + chr(10))
                         sf.flush()
-        elif isinstance(msg, ToolResultMessage):
+        elif type(msg).__name__ == 'ToolResultMessage':
             if sf:
                 sf.write(json.dumps({"type": "tool_result", "content": "done"}) + chr(10))
                 sf.flush()
