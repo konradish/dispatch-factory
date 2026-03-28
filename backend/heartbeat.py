@@ -433,7 +433,7 @@ ZOMBIE_THRESHOLD_MINUTES = 30
 
 
 def _gc_zombie_sessions() -> list[str]:
-    """Detect and mark zombie sessions — running state with no active tmux worker.
+    """Detect and mark zombie sessions — running/planning state with no active tmux worker.
 
     A zombie is a session whose most recent artifact hasn't been updated in
     ZOMBIE_THRESHOLD_MINUTES and whose tmux pane is either gone or dropped
@@ -445,7 +445,7 @@ def _gc_zombie_sessions() -> list[str]:
 
     for session in all_sessions:
         sid = session["id"]
-        if session["state"] != "running":
+        if session["state"] not in ("running", "planning"):
             continue
         if sid in active_ids:
             continue  # Worker is still alive
