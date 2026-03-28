@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import subprocess
@@ -158,6 +159,11 @@ async def lifespan(app: FastAPI):
     dispatch_path = Path(settings.dispatch_bin)
     if not dispatch_path.is_file():
         logger.warning("dispatch binary not found at %s", dispatch_path)
+
+    # Initialize SQLite database (migrates from JSON on first run)
+    import db
+    db.init_db()
+    logger.info("  database:      %s", db._get_db_path())
 
     watcher_task = asyncio.create_task(_watch_artifacts())
     heartbeat_task = asyncio.create_task(heartbeat.heartbeat_loop(interval=30))
@@ -323,6 +329,27 @@ async def create_ticket(req: TicketRequest) -> dict[str, str]:
         "stdout": result.stdout,
         "stderr": result.stderr,
     }
+
+
+@app.get("/api/sessions/{session_id}/output")
+async def get_session_output(session_id: str, lines: int = 20) -> dict:
+    """Return last N lines of live tmux output for a running session."""
+    _validate_session_id(session_id)
+    try:
+        result = subprocess.run(
+            ["tmux", "capture-pane", "-t", session_id, "-p", "-S", str(-lines)],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0:
+            # Strip ANSI escape codes for clean display
+            import re
+            clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', result.stdout)
+            # Remove empty trailing lines
+            output_lines = clean.rstrip().split("\n")
+            return {"session_id": session_id, "lines": output_lines, "alive": True}
+        return {"session_id": session_id, "lines": [], "alive": False}
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {"session_id": session_id, "lines": [], "alive": False}
 
 
 @app.post("/api/sessions/{session_id}/hold")
@@ -626,8 +653,6 @@ async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) ->
     _require_controls()
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
-    from config import update_heartbeat_config
-    update_heartbeat_config(auto_dispatch=enabled, max_concurrent=max_concurrent)
     return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
 
 
@@ -1000,6 +1025,51 @@ async def run_foreman_now(lens_id: str | None = None) -> dict:
     return foreman.run_foreman(lens_id=lens_id)
 
 
+@app.get("/api/foreman/stream")
+async def foreman_stream(after: int = 0) -> dict:
+    """Poll for foreman thinking events (tool calls, intermediate text)."""
+    events, next_line = foreman.get_stream_events(after_line=after)
+    return {"events": events, "next": next_line}
+
+
+@app.get("/api/foreman/threads")
+async def list_foreman_threads() -> list[dict]:
+    """Return all chat threads."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT * FROM foreman_threads ORDER BY last_message_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/foreman/threads")
+async def create_foreman_thread(body: dict) -> dict:
+    """Create a new chat thread."""
+    import db
+    import time
+    import uuid
+    title = (body.get("title") or "").strip() or f"Thread {time.strftime('%m/%d %H:%M')}"
+    thread_id = uuid.uuid4().hex[:8]
+    now = time.time()
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_threads (id, title, created_at, last_message_at) VALUES (?, ?, ?, ?)",
+            (thread_id, title, now, now),
+        )
+    return {"id": thread_id, "title": title}
+
+
+@app.get("/api/foreman/chat/history")
+async def foreman_chat_history(thread_id: str = "default", limit: int = 50) -> list[dict]:
+    """Return chat messages for a thread."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT role, text, actions, timestamp FROM foreman_chat WHERE thread_id = ? ORDER BY id DESC LIMIT ?",
+            (thread_id, limit),
+        ).fetchall()
+    return [{"role": r["role"], "text": r["text"], "actions": json.loads(r["actions"]), "timestamp": r["timestamp"]} for r in reversed(rows)]
+
+
 @app.post("/api/foreman/chat")
 async def foreman_chat(body: dict) -> dict:
     """Chat with the foreman — run a foreman cycle with a human message injected."""
@@ -1007,7 +1077,41 @@ async def foreman_chat(body: dict) -> dict:
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
-    return foreman.run_foreman(human_message=message)
+    thread_id = body.get("thread_id", "default")
+
+    import db
+    import time
+    now = time.time()
+
+    # Persist human message
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_chat (thread_id, role, text, actions, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (thread_id, "human", message, "[]", now),
+        )
+
+    # Run foreman in thread to avoid blocking other API requests
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, lambda: foreman.run_foreman(human_message=message))
+
+    # Persist foreman response
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_chat (thread_id, role, text, actions, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (thread_id, "foreman", result.get("assessment", ""), json.dumps(result.get("actions", [])), result.get("timestamp", now)),
+        )
+        # Update thread metadata
+        conn.execute(
+            """INSERT INTO foreman_threads (id, title, created_at, last_message_at, message_count)
+               VALUES (?, ?, ?, ?, 2)
+               ON CONFLICT(id) DO UPDATE SET
+               last_message_at = excluded.last_message_at,
+               message_count = message_count + 2""",
+            (thread_id, message[:60], now, now),
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------------

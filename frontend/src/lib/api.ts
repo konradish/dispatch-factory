@@ -213,9 +213,63 @@ export interface ForemanResult {
   timestamp: number;
 }
 
-export function foremanChat(message: string): Promise<ApiResult<ForemanResult>> {
+export function foremanChat(message: string, threadId = "default"): Promise<ApiResult<ForemanResult>> {
   return request<ForemanResult>("/api/foreman/chat", {
     method: "POST",
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, thread_id: threadId }),
   });
+}
+
+// Session live output
+export interface SessionOutput {
+  session_id: string;
+  lines: string[];
+  alive: boolean;
+}
+
+export function fetchSessionOutput(id: string, lines = 20): Promise<ApiResult<SessionOutput>> {
+  return request<SessionOutput>(`/api/sessions/${id}/output?lines=${lines}`);
+}
+
+// Foreman chat threads & history
+export interface ChatThread {
+  id: string;
+  title: string;
+  created_at: number;
+  last_message_at: number;
+  message_count: number;
+  summary: string | null;
+}
+
+export interface ChatMessage {
+  role: "human" | "foreman";
+  text: string;
+  actions: ForemanResult["actions"];
+  timestamp: number;
+}
+
+export interface StreamEvent {
+  type: "text" | "tool_use" | "tool_result" | "done";
+  content?: string;
+  tool?: string;
+  summary?: string;
+}
+
+export function fetchForemanStream(after = 0): Promise<ApiResult<{ events: StreamEvent[]; next: number }>> {
+  return request<{ events: StreamEvent[]; next: number }>(`/api/foreman/stream?after=${after}`);
+}
+
+export function fetchThreads(): Promise<ApiResult<ChatThread[]>> {
+  return request<ChatThread[]>("/api/foreman/threads");
+}
+
+export function createThread(title?: string): Promise<ApiResult<{ id: string; title: string }>> {
+  return request<{ id: string; title: string }>("/api/foreman/threads", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function fetchChatHistory(threadId = "default", limit = 50): Promise<ApiResult<ChatMessage[]>> {
+  return request<ChatMessage[]>(`/api/foreman/chat/history?thread_id=${threadId}&limit=${limit}`);
 }

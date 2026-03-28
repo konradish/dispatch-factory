@@ -69,7 +69,9 @@ async def heartbeat_loop(interval: int | None = None) -> None:
 
     while True:
         try:
-            actions = _beat()
+            # Run _beat in thread pool so it doesn't block the async event loop
+            loop = asyncio.get_event_loop()
+            actions = await loop.run_in_executor(None, _beat)
             _state["last_beat"] = time.time()
             _state["beats"] += 1
             _state["last_actions"] = actions
@@ -110,21 +112,37 @@ def _beat() -> list[str]:
     # 6. Reviewer calibration: test canary scenarios on cooldown
     actions.extend(reviewer_calibration.check_and_run())
 
+    # 6b. Process completed workers (post-worker pipeline stages)
+    try:
+        import pipeline_runner
+        for completion in pipeline_runner.scan_for_completions():
+            actions.extend(pipeline_runner.process_worker_completion(completion))
+    except Exception as e:
+        actions.append(f"pipeline_runner error: {e}")
+
     # 7. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 8. Run foreman (LLM reasoning with rotating lens)
-    if _state.get("auto_dispatch_enabled", False):
-        try:
-            import foreman
-            result = foreman.run_foreman()
-            if result.get("actions"):
-                actions.append(f"foreman[{result.get('lens', '?')}]: {len(result['actions'])} actions")
-            elif result.get("assessment"):
-                actions.append(f"foreman[{result.get('lens', '?')}]: {result['assessment'][:80]}")
-        except Exception as e:
-            actions.append(f"foreman error: {e}")
+    # 8. Run foreman in background thread — every 5th beat (~2.5 min)
+    #    Foreman can take minutes with 100 turns. Must not block the event loop.
+    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 20 == 0:
+        import threading
+        def _run_foreman_bg():
+            try:
+                import foreman
+                result = foreman.run_foreman()
+                summary = ""
+                if result.get("actions"):
+                    summary = f"foreman[{result.get('lens', '?')}]: {len(result['actions'])} actions"
+                elif result.get("assessment"):
+                    summary = f"foreman[{result.get('lens', '?')}]: {result['assessment'][:80]}"
+                if summary:
+                    _state["last_actions"] = _state.get("last_actions", []) + [summary]
+            except Exception as e:
+                _state["last_actions"] = _state.get("last_actions", []) + [f"foreman error: {e}"]
+        threading.Thread(target=_run_foreman_bg, daemon=True).start()
+        actions.append("foreman: started in background")
 
     return actions
 
@@ -585,9 +603,14 @@ def _auto_dispatch() -> list[str]:
                 ticket.setdefault("flags", []).append("--no-heal")
             actions.append(f"healer-circuit-breaker: {ticket['id']} dispatched with --no-heal ({ticket['project']})")
 
-        # Dispatch via CLI
+        # Dispatch via CLI — filter to known CLI flags only
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
-        cmd.extend(ticket.get("flags", []))
+        # Pass task type if set
+        task_type = ticket.get("task_type", "code")
+        if task_type != "code":
+            cmd.extend(["--type", task_type])
+        cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
 
         try:
             result = subprocess.run(
