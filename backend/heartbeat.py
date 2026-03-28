@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 import time
 
 import artifacts
@@ -25,7 +24,6 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
-import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -96,12 +94,14 @@ def _beat() -> list[str]:
     # 1. Process completed workers (post-worker pipeline stages)
     #    Runs BEFORE zombie GC so that pipeline_runner can write -result.md
     #    artifacts before sessions are marked abandoned.
-    try:
-        import pipeline_runner
-        for completion in pipeline_runner.scan_for_completions():
+    import pipeline_runner
+    for completion in pipeline_runner.scan_for_completions():
+        try:
             actions.extend(pipeline_runner.process_worker_completion(completion))
-    except Exception as e:
-        actions.append(f"pipeline_runner error: {e}")
+        except Exception as e:
+            session_id = completion.get("session_id", "unknown") if isinstance(completion, dict) else "unknown"
+            logger.exception("process_worker_completion failed for session %s", session_id)
+            actions.append(f"pipeline_runner error for {session_id}: {e}")
 
     # 2. Garbage-collect zombie sessions (running state, no active worker)
     actions.extend(_gc_zombie_sessions())
@@ -221,8 +221,18 @@ def _reconcile_backlog() -> list[str]:
             actions.extend(circuit_breaker.record_result(project, success=False))
         elif state == "worker_done":
             # Worker finished but result.md not yet written by process_worker_completion.
-            # Skip — let scan_for_completions handle it on the next heartbeat cycle.
-            logger.warning("ticket %s session %s in worker_done — deferring to next cycle", ticket["id"], session_id)
+            # Defer briefly — but if stuck >60min, mark as failed to prevent infinite deferral.
+            session_age_minutes = (time.time() - session.get("mtime", time.time())) / 60
+            if session_age_minutes > 60:
+                backlog.mark_completed(ticket["id"], "failed")
+                logger.warning(
+                    "ticket %s session %s stuck in worker_done for %dmin — marking failed",
+                    ticket["id"], session_id, int(session_age_minutes),
+                )
+                actions.append(f"ticket {ticket['id']} worker_done stale ({session_id}, {int(session_age_minutes)}min)")
+                actions.extend(circuit_breaker.record_result(project, success=False))
+            else:
+                logger.warning("ticket %s session %s in worker_done — deferring to next cycle", ticket["id"], session_id)
 
     return actions
 
