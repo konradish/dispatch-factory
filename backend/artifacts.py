@@ -97,6 +97,8 @@ def _detect_session_state(artifacts: dict[str, object]) -> str:
         return "reviewing"
     if "planner" in artifacts:
         return "planning"
+    if "worker_done" in artifacts:
+        return "completed"
     # Has a log but no other artifacts — worker is running or just started
     return "running"
 
