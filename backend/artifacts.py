@@ -97,6 +97,8 @@ def _detect_session_state(artifacts: dict[str, object]) -> str:
         return "reviewing"
     if "planner" in artifacts:
         return "planning"
+    if "worker_done" in artifacts:
+        return "worker_done"
     # Has a log but no other artifacts — worker is running or just started
     return "running"
 
@@ -373,9 +375,24 @@ def list_sessions_with_timestamps() -> list[dict]:
         sid = r["id"]
         _update_session_state(sid)
         # If still "running" after re-scan but no tmux process → mark abandoned
+        # But only if: no worker_done artifact exists, and session is old enough
         with db.get_conn() as conn:
             row = conn.execute("SELECT state FROM sessions WHERE id = ?", (sid,)).fetchone()
             if row and row["state"] == "running" and sid not in active_ids:
+                # Skip if worker_done artifact exists (worker finished, pipeline will pick it up)
+                worker_done_file = _artifacts_path() / f"{sid}-worker-done.json"
+                if worker_done_file.is_file():
+                    continue
+                # Age gate: only mark abandoned if log is old enough (matches _gc_zombie_sessions)
+                from heartbeat import ZOMBIE_THRESHOLD_MINUTES
+                log_path = _artifacts_path() / f"{sid}.log"
+                if log_path.is_file():
+                    try:
+                        age_minutes = (_time.time() - log_path.stat().st_mtime) / 60
+                    except OSError:
+                        age_minutes = 0
+                    if age_minutes < ZOMBIE_THRESHOLD_MINUTES:
+                        continue
                 conn.execute(
                     "UPDATE sessions SET state = 'abandoned', updated_at = ? WHERE id = ?",
                     (_time.time(), sid),
