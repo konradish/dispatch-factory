@@ -302,7 +302,8 @@ def _build_real_reviewer_prompt(canary: dict) -> str:
 - Debug prints (print/console.log) that should be removed?
 - New dependencies not declared in requirements/package.json?
 - Broken callers — does the diff change function signatures that other code depends on?
-- Obvious logic errors or security issues?
+- Null/undefined safety: does the diff access properties on values that could be null/undefined without guards? (e.g., `user.profile.name` without checking if user or profile exists)
+- Obvious logic errors, crashes, or security issues?
 
 ## Job 2: Criteria Satisfaction (results-oriented)
 

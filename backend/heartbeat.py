@@ -125,8 +125,9 @@ def _beat() -> list[str]:
     #    dispatch-factory, lawpass, recipebrain — see PR #32).
     actions.extend(_sweep_orphaned_healed_sessions())
 
-    # 7. Reviewer calibration: test canary scenarios on cooldown
-    actions.extend(reviewer_calibration.check_and_run())
+    # 7. Reviewer calibration: DISABLED — no LLM reviewer in current pipeline.
+    # Re-enable when LLM reviewer stage is added to pipeline_runner.py.
+    # actions.extend(reviewer_calibration.check_and_run())
 
     # 8. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
@@ -547,11 +548,11 @@ def _auto_dispatch() -> list[str]:
         actions.append("factory_idle: all active projects need human input — dispatch blocked")
         return actions
 
-    # Reviewer calibration gate: block all dispatches if reviewer is miscalibrated
-    cal_state = reviewer_calibration.get_calibration_state()
-    if cal_state.get("consecutive_failures", 0) > 0:
-        actions.append("reviewer_miscalibrated: dispatch blocked until calibration passes")
-        return actions
+    # Reviewer calibration gate: DISABLED — no LLM reviewer in current pipeline.
+    # cal_state = reviewer_calibration.get_calibration_state()
+    # if cal_state.get("consecutive_failures", 0) > 0:
+    #     actions.append("reviewer_miscalibrated: dispatch blocked until calibration passes")
+    #     return actions
 
     active = artifacts.get_active_sessions()
     max_concurrent = _state.get("max_concurrent", 3)

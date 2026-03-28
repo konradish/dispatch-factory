@@ -593,12 +593,19 @@ def _run_dispatch_guards(ticket: dict) -> None:
             detail="Factory idle mode: all active projects need human input. Provide direction first.",
         )
 
-    cal_state = reviewer_calibration.get_calibration_state()
-    if cal_state.get("consecutive_failures", 0) > 0:
-        raise HTTPException(
-            status_code=409,
-            detail="Reviewer miscalibrated — run /api/reviewer-calibration to re-test.",
-        )
+    # Reviewer calibration gate DISABLED (2026-03-28): the LLM reviewer stage
+    # was removed when the runner slimmed from 1750→46 lines. Pipeline now does
+    # validate (tests) → merge with no LLM review step. The calibration canary
+    # tests a prompt for a reviewer that no longer runs, so failures are false
+    # positives that block all dispatch. Re-enable when LLM reviewer stage is
+    # added to pipeline_runner.py.
+    #
+    # cal_state = reviewer_calibration.get_calibration_state()
+    # if cal_state.get("consecutive_failures", 0) > 0:
+    #     raise HTTPException(
+    #         status_code=409,
+    #         detail="Reviewer miscalibrated — run /api/reviewer-calibration to re-test.",
+    #     )
 
     _validate_task_quality(ticket["task"].strip())
 
