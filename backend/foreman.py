@@ -344,8 +344,8 @@ asyncio.run(main())
 
     try:
         r = subprocess.run(
-            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "10", factory_dir],
-            capture_output=True, text=True, timeout=300, env=env,
+            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "100", factory_dir],
+            capture_output=True, text=True, timeout=600, env=env,
         )
 
         if r.returncode != 0:
@@ -357,13 +357,42 @@ asyncio.run(main())
             return None
 
         response_text = json.loads(raw).get("response", "").strip()
+
+        # Strip markdown code fences
         if response_text.startswith("```"):
             lines = response_text.split("\n")
             response_text = "\n".join(lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:])
 
-        return json.loads(response_text)
+        # Try to parse as JSON first
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError:
+            pass
 
-    except (json.JSONDecodeError, subprocess.TimeoutExpired) as e:
+        # Try to extract JSON from within the response (foreman may have mixed text + JSON)
+        import re
+        json_match = re.search(r'\{[^{}]*"assessment"[^{}]*\}', response_text, re.DOTALL)
+        if not json_match:
+            # Try multiline JSON with nested objects
+            json_match = re.search(r'\{[\s\S]*"assessment"[\s\S]*\}', response_text)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        # Fallback: treat the entire response as the assessment (foreman gave prose, not JSON)
+        logger.warning("Foreman returned non-JSON response (%d chars), using as assessment", len(response_text))
+        return {
+            "assessment": response_text[:500],
+            "observations": "",
+            "actions": [],
+        }
+
+    except subprocess.TimeoutExpired:
+        logger.error("Foreman LLM timed out (600s)")
+        return None
+    except Exception as e:
         logger.error("Foreman LLM error: %s", e)
         return None
     finally:

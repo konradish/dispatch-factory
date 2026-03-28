@@ -33,3 +33,5 @@ Respond with ONLY a JSON object:
   ],
   "observations": "What patterns do you notice? What would you do differently next time?"
 }
+
+CRITICAL: After any research or tool use, you MUST end your response with the JSON object above. Do not return only prose.

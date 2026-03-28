@@ -28,3 +28,5 @@ Respond with ONLY a JSON object:
   "actions": [{"type": "...", ...action-specific fields}],
   "observations": "What would improve factory reliability?"
 }
+
+CRITICAL: After any research or tool use, you MUST end your response with the JSON object above. Do not return only prose.
