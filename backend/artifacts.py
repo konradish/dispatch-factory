@@ -75,10 +75,6 @@ def _extract_task(artifacts_dir: Path, session_id: str) -> str:
 
 def _detect_session_state(artifacts: dict[str, object]) -> str:
     """Derive a high-level state from whichever artifacts exist."""
-    if "abandoned" in artifacts:
-        return "abandoned"
-    if "error" in artifacts:
-        return "error"
     if "result" in artifacts:
         # Check verifier for deploy status
         verifier = artifacts.get("verifier")
@@ -89,6 +85,10 @@ def _detect_session_state(artifacts: dict[str, object]) -> str:
             if status == "ROLLBACK":
                 return "rolled_back"
         return "completed"
+    if "abandoned" in artifacts:
+        return "abandoned"
+    if "error" in artifacts:
+        return "error"
     if "monitor" in artifacts:
         return "monitoring"
     if "verifier" in artifacts:
