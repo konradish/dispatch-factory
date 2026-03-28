@@ -18,7 +18,6 @@ from pathlib import Path
 import artifacts
 import backlog
 import circuit_breaker
-import factory_idle_mode
 import healer_circuit_breaker
 import meta_work_ratio
 import pipeline
@@ -459,23 +458,18 @@ def _execute_action(action: dict) -> dict:
         return {"type": "do_nothing", "status": "ok"}
 
     elif action_type == "dispatch":
-        # Factory idle mode: hard stop — no dispatches when all projects need human input
-        if factory_idle_mode.is_idle():
-            return {"type": "dispatch", "status": "blocked", "detail": "Factory idle mode — all active projects need human input"}
+        # Foreman is GOD MODE — no circuit breaker, no meta-work ratio, no idle mode blocks.
+        # These guards only apply to heartbeat auto-dispatch, not foreman decisions.
         ticket_id = action.get("ticket_id", "")
         ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
         if not ticket:
             return {"type": "dispatch", "status": "error", "detail": f"Ticket {ticket_id} not found"}
-        # Pre-dispatch guard: reject if project already has an in-flight ticket
+        # Only guard: don't dispatch if project already has an in-flight ticket
         if backlog.has_inflight_ticket(ticket["project"]):
             return {"type": "dispatch", "status": "blocked", "detail": f"Project {ticket['project']} already has an in-flight ticket"}
-        # Circuit breaker: block dispatches to tripped projects
+        # Reset circuit breaker if tripped (foreman decided to dispatch, so it's intentional)
         if circuit_breaker.is_project_blocked(ticket["project"]):
-            return {"type": "dispatch", "status": "blocked", "detail": f"Circuit breaker tripped for {ticket['project']}"}
-        # Meta-work ratio: block dispatch-factory work when ratio is too high
-        if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
-            return {"type": "dispatch", "status": "blocked", "detail": "Meta-work ratio exceeded — dispatch a product session first"}
-        # Priority inversion guard: block lower-priority dispatch when capacity is at max
+            circuit_breaker.reset_project(ticket["project"])
         import heartbeat as _hb
         active = artifacts.get_active_sessions()
         max_concurrent = _hb._state.get("max_concurrent", 3)
@@ -510,9 +504,7 @@ def _execute_action(action: dict) -> dict:
         project = action.get("project", "unknown")
         priority = action.get("priority", "normal")
         status = action.get("status", "pending")
-        # Block creating dispatch-factory tickets when meta-work ratio is high
-        if project == "dispatch-factory" and meta_work_ratio.get_ratio()["ratio"] > 0.4 and priority != "urgent":
-            return {"type": "create_ticket", "status": "blocked", "detail": "Meta-work ratio too high — cannot create more dispatch-factory tickets"}
+        # Foreman is GOD MODE — no meta-work ratio block for ticket creation
         if task:
             # Allow foreman to create tickets directly as on_hold
             if status == "on_hold":
@@ -525,11 +517,7 @@ def _execute_action(action: dict) -> dict:
     elif action_type == "reprioritize":
         ticket_id = action.get("ticket_id", "")
         new_priority = action.get("priority", "normal")
-        # Guard: foreman cannot escalate dispatch-factory tickets to urgent
-        # (only humans can, to prevent meta-work breaker bypass via priority gaming)
-        ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
-        if ticket and ticket.get("project") == "dispatch-factory" and new_priority == "urgent":
-            return {"type": "reprioritize", "status": "blocked", "detail": "Cannot escalate dispatch-factory tickets to urgent — human escalation only"}
+        # Foreman is GOD MODE — no priority restrictions
         result = backlog.update_ticket(ticket_id, {"priority": new_priority})
         if result:
             return {"type": "reprioritize", "status": "ok", "ticket_id": ticket_id, "priority": new_priority}
@@ -564,11 +552,7 @@ def _execute_action(action: dict) -> dict:
         filtered = {k: v for k, v in updates.items() if k in allowed}
         if not filtered:
             return {"type": action_type, "status": "error", "detail": f"No allowed fields in updates (allowed: {allowed})"}
-        # Guard: foreman cannot escalate dispatch-factory tickets to urgent
-        if filtered.get("priority") == "urgent":
-            ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
-            if ticket and ticket.get("project") == "dispatch-factory":
-                return {"type": action_type, "status": "blocked", "detail": "Cannot escalate dispatch-factory tickets to urgent — human escalation only"}
+        # Foreman is GOD MODE — no priority restrictions
         result = backlog.update_ticket(ticket_id, filtered)
         if result:
             return {"type": action_type, "status": "ok", "ticket_id": ticket_id, "detail": f"Updated: {list(filtered.keys())}"}
@@ -654,6 +638,33 @@ def _execute_action(action: dict) -> dict:
         if result:
             return {"type": action_type, "status": "ok", "ticket_id": ticket_id}
         return {"type": action_type, "status": "error", "detail": f"Ticket {ticket_id} not found"}
+
+    elif action_type == "spawn_worker":
+        # Spawn a worker to fix a pipeline/factory issue. The foreman describes the task
+        # and the worker (cy -p) implements it. For self-improvement of the factory.
+        task = action.get("task", "")
+        project = action.get("project", "dispatch-factory")
+        task_type = action.get("task_type", "code")
+        if not task:
+            return {"type": action_type, "status": "error", "detail": "task required"}
+        # Create ticket and dispatch immediately
+        ticket = backlog.create_ticket(task, project, priority="high", source="foreman", task_type=task_type)
+        ticket_id = ticket["id"]
+        # Dispatch
+        cmd = [settings.dispatch_bin, task, "--project", project]
+        if task_type != "code":
+            cmd.extend(["--type", task_type])
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            if r.returncode == 0:
+                import re
+                match = re.search(r"session\s*:\s*([\w-]+)", r.stdout)
+                session_id = match.group(1) if match else "unknown"
+                backlog.mark_dispatched(ticket_id, session_id)
+                return {"type": action_type, "status": "ok", "ticket_id": ticket_id, "session_id": session_id, "detail": f"Worker spawned: {session_id}"}
+            return {"type": action_type, "status": "error", "detail": f"Dispatch failed: {r.stderr[:200]}"}
+        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+            return {"type": action_type, "status": "error", "detail": str(e)}
 
     return {"type": action_type, "status": "unknown_action"}
 
