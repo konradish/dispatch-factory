@@ -509,7 +509,7 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
               />
               <div className="flex gap-2 flex-wrap">
                 <button
-                  onClick={handleAddNote}
+                  onClick={() => handleAddNote()}
                   disabled={noteSending || !noteText.trim()}
                   className="px-3 py-1.5 rounded text-xs font-medium bg-accent-blue/15 text-accent-blue border border-accent-blue/30 hover:bg-accent-blue/25 disabled:opacity-40 transition-colors"
                 >
@@ -577,9 +577,6 @@ interface KanbanCardProps {
 function KanbanCard({
   ticket,
   columnId,
-  isDragging,
-  onDragStart,
-  onDragEnd,
   onDispatch,
   onRetry,
   onSelectSession,

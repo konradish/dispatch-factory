@@ -81,14 +81,24 @@ export interface Brief {
 }
 
 // Matches /api/backlog response
+export interface TicketNote {
+  text: string;
+  author: string;
+  timestamp: number;
+}
+
 export interface BacklogTicket {
   id: string;
   task: string;
   project: string;
   priority: "low" | "normal" | "high" | "urgent";
+  task_type?: string;
   flags: string;
-  status: "intake" | "needs_input" | "ready" | "pending" | "dispatched" | "completed" | "failed" | "cancelled";
+  tags?: string[];
+  status: "intake" | "needs_input" | "on_hold" | "ready" | "pending" | "dispatched" | "completed" | "failed" | "cancelled" | "blocked";
   source: string;
+  hold_reason?: string | null;
+  notes?: TicketNote[];
   session_id: string | null;
   created_at: string;
   dispatched_at: string | null;
