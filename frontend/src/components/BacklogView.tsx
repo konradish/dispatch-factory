@@ -5,6 +5,7 @@ import {
   createBacklogTicket,
   dispatchBacklogTicket,
   updateBacklogTicket,
+  addTicketNote,
   fetchSelfImprovement,
 } from "@/lib/api";
 import { validateTaskQuality, TASK_MIN_LENGTH } from "@/lib/taskQuality";
@@ -114,6 +115,11 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
 
   // Cancel drop zone
   const [cancelHover, setCancelHover] = useState(false);
+
+  // Ticket detail
+  const [selectedTicket, setSelectedTicket] = useState<BacklogTicket | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [noteSending, setNoteSending] = useState(false);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -405,6 +411,7 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
                         await updateBacklogTicket(id, updates);
                         load();
                       }}
+                      onOpenDetail={(t) => { setSelectedTicket(t); setNoteText(""); }}
                     />
                   ))
                 )}
@@ -434,8 +441,122 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
           Drop here to cancel
         </div>
       )}
+
+      {/* Ticket detail slide-over */}
+      {selectedTicket && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm" onClick={() => setSelectedTicket(null)} />
+          <div className="fixed top-0 right-0 z-50 h-full w-[560px] max-w-full bg-bg-base border-l border-gray-800 flex flex-col shadow-2xl animate-slide-in">
+            {/* Header */}
+            <div className="shrink-0 border-b border-gray-800 px-5 py-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="inline-block h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: projectColor(selectedTicket.project) }} />
+                  <span className="text-xs mono text-gray-400">{selectedTicket.project}</span>
+                  <span className={`text-xs font-semibold mono uppercase ${PRIORITY_COLORS[selectedTicket.priority] ?? "text-gray-500"}`}>{selectedTicket.priority}</span>
+                  <span className="text-[10px] mono text-gray-600 px-1.5 py-0.5 rounded bg-bg-surface-alt">{selectedTicket.status}</span>
+                </div>
+                <button onClick={() => setSelectedTicket(null)} className="text-gray-500 hover:text-gray-300 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <p className="text-sm text-gray-200 leading-relaxed">{selectedTicket.task}</p>
+              {selectedTicket.session_id && (
+                <button onClick={() => { setSelectedTicket(null); onSelectSession(selectedTicket.session_id!); }} className="mt-2 text-[10px] mono text-accent-cyan hover:text-accent-cyan/80">
+                  Session: {selectedTicket.session_id}
+                </button>
+              )}
+              <div className="text-[10px] text-gray-600 mt-1">ID: {selectedTicket.id} · Created: {formatTime(selectedTicket.created_at)}</div>
+            </div>
+
+            {/* Notes */}
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+              {(!selectedTicket.notes || selectedTicket.notes.length === 0) && (
+                <div className="text-center text-gray-600 text-sm py-8">No notes yet.</div>
+              )}
+              {selectedTicket.notes?.map((note, i) => (
+                <div key={i} className={`rounded px-3 py-2 text-xs leading-relaxed ${
+                  note.author === "human" ? "bg-accent-blue/10 border border-accent-blue/20" :
+                  note.author === "foreman" ? "bg-accent-purple/10 border border-accent-purple/20" :
+                  "bg-bg-surface-alt border border-gray-800"
+                }`}>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className={`text-[10px] font-semibold mono uppercase ${
+                      note.author === "human" ? "text-accent-blue" : note.author === "foreman" ? "text-accent-purple" : "text-gray-500"
+                    }`}>{note.author}</span>
+                    <span className="text-[10px] text-gray-600">{formatTime(note.timestamp)}</span>
+                  </div>
+                  <p className="text-gray-300 whitespace-pre-wrap">{note.text}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Note input + actions */}
+            <div className="shrink-0 border-t border-gray-800 px-5 py-3 space-y-2">
+              <textarea
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                placeholder="Add a note or answer a question..."
+                rows={2}
+                className="w-full bg-bg-surface border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-accent-blue resize-none"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey && noteText.trim()) {
+                    e.preventDefault();
+                    handleAddNote();
+                  }
+                  if (e.key === "Escape") setSelectedTicket(null);
+                }}
+              />
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={handleAddNote}
+                  disabled={noteSending || !noteText.trim()}
+                  className="px-3 py-1.5 rounded text-xs font-medium bg-accent-blue/15 text-accent-blue border border-accent-blue/30 hover:bg-accent-blue/25 disabled:opacity-40 transition-colors"
+                >
+                  {noteSending ? "Sending..." : "Add Note"}
+                </button>
+                {(selectedTicket.status === "on_hold" || selectedTicket.status === "needs_input") && (
+                  <button
+                    onClick={() => handleAddNote("ready")}
+                    disabled={noteSending || !noteText.trim()}
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-accent-green/15 text-accent-green border border-accent-green/30 hover:bg-accent-green/25 disabled:opacity-40 transition-colors"
+                  >
+                    Answer &amp; Ready
+                  </button>
+                )}
+                {(selectedTicket.status === "ready" || selectedTicket.status === "pending") && (
+                  <button
+                    onClick={async () => { await dispatchBacklogTicket(selectedTicket.id); setSelectedTicket(null); load(); }}
+                    className="px-3 py-1.5 rounded text-xs font-medium bg-accent-green/15 text-accent-green border border-accent-green/30 hover:bg-accent-green/25 transition-colors"
+                  >
+                    Dispatch
+                  </button>
+                )}
+                <button
+                  onClick={async () => { await updateBacklogTicket(selectedTicket.id, { status: "cancelled" }); setSelectedTicket(null); load(); }}
+                  className="px-3 py-1.5 rounded text-xs text-accent-red/70 hover:text-accent-red transition-colors ml-auto"
+                >
+                  Cancel Ticket
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
+
+  async function handleAddNote(moveStatus?: string) {
+    if (!selectedTicket || !noteText.trim()) return;
+    setNoteSending(true);
+    const result = await addTicketNote(selectedTicket.id, noteText.trim(), "human", moveStatus);
+    setNoteSending(false);
+    if (result.data) {
+      setSelectedTicket(result.data);
+      setNoteText("");
+      load();
+    }
+  }
 }
 
 // -- KanbanCard ---------------------------------------------------------------
@@ -450,6 +571,7 @@ interface KanbanCardProps {
   onRetry: (id: string) => void;
   onSelectSession: (sessionId: string) => void;
   onUpdateTicket: (id: string, updates: Record<string, unknown>) => void;
+  onOpenDetail: (ticket: BacklogTicket) => void;
 }
 
 function KanbanCard({
@@ -462,6 +584,7 @@ function KanbanCard({
   onRetry,
   onSelectSession,
   onUpdateTicket,
+  onOpenDetail,
 }: KanbanCardProps) {
   const [editing, setEditing] = useState(false);
   const [editTask, setEditTask] = useState(ticket.task);
@@ -474,7 +597,8 @@ function KanbanCard({
       draggable
       onDragStart={(e) => onDragStart(e, ticket.id)}
       onDragEnd={onDragEnd}
-      className={`rounded-md border border-l-2 ${bgClass} ${cardBorder} px-3 py-2 cursor-grab active:cursor-grabbing transition-opacity ${
+      onClick={() => onOpenDetail(ticket)}
+      className={`rounded-md border border-l-2 ${bgClass} ${cardBorder} px-3 py-2 cursor-pointer transition-opacity ${
         isDragging ? "opacity-40" : "opacity-100"
       } hover:bg-bg-surface-alt/50`}
     >
