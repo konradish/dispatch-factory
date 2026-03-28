@@ -57,6 +57,17 @@ def init_db() -> None:
         except Exception:
             conn.execute("ALTER TABLE tickets ADD COLUMN task_type TEXT NOT NULL DEFAULT 'code'")
             logger.info("Added task_type column to tickets table")
+        # Add thread_id column to foreman_chat if missing
+        try:
+            conn.execute("SELECT thread_id FROM foreman_chat LIMIT 1")
+        except Exception:
+            conn.execute("ALTER TABLE foreman_chat ADD COLUMN thread_id TEXT NOT NULL DEFAULT 'default'")
+            logger.info("Added thread_id column to foreman_chat table")
+        # Create foreman_threads table if missing
+        conn.execute("""CREATE TABLE IF NOT EXISTS foreman_threads (
+            id TEXT PRIMARY KEY, title TEXT NOT NULL,
+            created_at REAL NOT NULL, last_message_at REAL NOT NULL,
+            message_count INTEGER NOT NULL DEFAULT 0, summary TEXT)""")
     _migrate_from_json()
     _migrate_sessions_from_disk()
 
@@ -95,10 +106,22 @@ CREATE INDEX IF NOT EXISTS idx_notes_ticket ON ticket_notes(ticket_id);
 
 CREATE TABLE IF NOT EXISTS foreman_chat (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL DEFAULT 'default',
     role TEXT NOT NULL,
     text TEXT NOT NULL,
     actions TEXT NOT NULL DEFAULT '[]',
     timestamp REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_thread ON foreman_chat(thread_id);
+
+CREATE TABLE IF NOT EXISTS foreman_threads (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    last_message_at REAL NOT NULL,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    summary TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

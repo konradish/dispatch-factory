@@ -292,10 +292,13 @@ Respond with a clear assessment and take any actions needed.
 
 
 def _call_llm(prompt: str) -> dict | None:
-    """Call claude_reason and parse JSON response."""
+    """Call Claude via Agent SDK with memory and project context enabled."""
     env = dict(__import__("os").environ)
     env.pop("ANTHROPIC_API_KEY", None)
     env.pop("CLAUDECODE", None)
+
+    # Factory project dir — enables CLAUDE.md, auto-memory, project context
+    factory_dir = str(Path(__file__).parent.parent)
 
     script_content = """
 import asyncio, sys, json, pathlib
@@ -304,11 +307,16 @@ async def main():
     prompt_path = sys.argv[1]
     out_path = sys.argv[2]
     max_turns = int(sys.argv[3])
+    cwd = sys.argv[4] if len(sys.argv) > 4 else None
 
     prompt = pathlib.Path(prompt_path).read_text()
 
     from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-    options = ClaudeAgentOptions(max_turns=max_turns)
+    options = ClaudeAgentOptions(
+        max_turns=max_turns,
+        cwd=cwd,
+        setting_sources=["user", "project"],
+    )
 
     result_parts = []
     result_fallback = None
@@ -336,7 +344,7 @@ asyncio.run(main())
 
     try:
         r = subprocess.run(
-            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "1"],
+            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "1", factory_dir],
             capture_output=True, text=True, timeout=90, env=env,
         )
 

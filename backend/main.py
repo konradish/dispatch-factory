@@ -1027,14 +1027,40 @@ async def run_foreman_now(lens_id: str | None = None) -> dict:
     return foreman.run_foreman(lens_id=lens_id)
 
 
+@app.get("/api/foreman/threads")
+async def list_foreman_threads() -> list[dict]:
+    """Return all chat threads."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute("SELECT * FROM foreman_threads ORDER BY last_message_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.post("/api/foreman/threads")
+async def create_foreman_thread(body: dict) -> dict:
+    """Create a new chat thread."""
+    import db
+    import time
+    import uuid
+    title = (body.get("title") or "").strip() or f"Thread {time.strftime('%m/%d %H:%M')}"
+    thread_id = uuid.uuid4().hex[:8]
+    now = time.time()
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_threads (id, title, created_at, last_message_at) VALUES (?, ?, ?, ?)",
+            (thread_id, title, now, now),
+        )
+    return {"id": thread_id, "title": title}
+
+
 @app.get("/api/foreman/chat/history")
-async def foreman_chat_history(limit: int = 50) -> list[dict]:
-    """Return recent foreman chat messages."""
+async def foreman_chat_history(thread_id: str = "default", limit: int = 50) -> list[dict]:
+    """Return chat messages for a thread."""
     import db
     with db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT role, text, actions, timestamp FROM foreman_chat ORDER BY id DESC LIMIT ?",
-            (limit,),
+            "SELECT role, text, actions, timestamp FROM foreman_chat WHERE thread_id = ? ORDER BY id DESC LIMIT ?",
+            (thread_id, limit),
         ).fetchall()
     return [{"role": r["role"], "text": r["text"], "actions": json.loads(r["actions"]), "timestamp": r["timestamp"]} for r in reversed(rows)]
 
@@ -1046,14 +1072,17 @@ async def foreman_chat(body: dict) -> dict:
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
+    thread_id = body.get("thread_id", "default")
 
-    # Persist human message
     import db
     import time
+    now = time.time()
+
+    # Persist human message
     with db.get_conn() as conn:
         conn.execute(
-            "INSERT INTO foreman_chat (role, text, actions, timestamp) VALUES (?, ?, ?, ?)",
-            ("human", message, "[]", time.time()),
+            "INSERT INTO foreman_chat (thread_id, role, text, actions, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (thread_id, "human", message, "[]", now),
         )
 
     result = foreman.run_foreman(human_message=message)
@@ -1061,8 +1090,17 @@ async def foreman_chat(body: dict) -> dict:
     # Persist foreman response
     with db.get_conn() as conn:
         conn.execute(
-            "INSERT INTO foreman_chat (role, text, actions, timestamp) VALUES (?, ?, ?, ?)",
-            ("foreman", result.get("assessment", ""), json.dumps(result.get("actions", [])), result.get("timestamp", time.time())),
+            "INSERT INTO foreman_chat (thread_id, role, text, actions, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (thread_id, "foreman", result.get("assessment", ""), json.dumps(result.get("actions", [])), result.get("timestamp", now)),
+        )
+        # Update thread metadata
+        conn.execute(
+            """INSERT INTO foreman_threads (id, title, created_at, last_message_at, message_count)
+               VALUES (?, ?, ?, ?, 2)
+               ON CONFLICT(id) DO UPDATE SET
+               last_message_at = excluded.last_message_at,
+               message_count = message_count + 2""",
+            (thread_id, message[:60], now, now),
         )
 
     return result
