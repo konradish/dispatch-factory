@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import time
 from pathlib import Path
 
@@ -162,7 +163,7 @@ def _run_validation(project: str, pr_url: str, session_id: str) -> bool:
 
         # Run tests
         r = subprocess.run(
-            test_cmd, shell=True,
+            shlex.split(test_cmd),
             cwd=cwd, capture_output=True, text=True, timeout=300,
         )
         passed = r.returncode == 0

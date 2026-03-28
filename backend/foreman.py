@@ -12,6 +12,7 @@ import json
 import logging
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -31,17 +32,23 @@ PROMPTS_DIR = Path(__file__).parent / "foreman-prompts"
 _rotation_index = 0
 _last_result: dict = {}
 _active_stream_path: str | None = None
+_stream_lock = threading.Lock()
 
 
 def get_stream_events(after_line: int = 0) -> tuple[list[dict], int]:
     """Read new events from the foreman's active stream file. Returns (events, next_line)."""
-    if not _active_stream_path:
+    with _stream_lock:
+        stream_path = _active_stream_path
+    if not stream_path:
         return [], after_line
     try:
-        path = Path(_active_stream_path)
+        path = Path(stream_path)
         if not path.is_file():
             return [], after_line
-        lines = path.read_text().strip().split("\n")
+        content = path.read_text()
+        if not content.strip():
+            return [], after_line
+        lines = content.strip().split("\n")
         new_lines = lines[after_line:]
         events = []
         for line in new_lines:
@@ -285,8 +292,9 @@ Respond with a clear assessment and take any actions needed.
 
     logger.info("Running foreman with lens: %s%s", lens["id"], " (chat)" if human_message else "")
 
-    # Call claude_reason
-    result = _call_llm(full_prompt)
+    # More turns for human chat, fewer for autonomous rotation (quota-aware)
+    max_turns = 100 if human_message else 20
+    result = _call_llm(full_prompt, max_turns=max_turns)
 
     if result is None:
         _last_result = {"lens": lens["id"], "error": "LLM call failed", "timestamp": time.time()}
@@ -313,7 +321,7 @@ Respond with a clear assessment and take any actions needed.
     return _last_result
 
 
-def _call_llm(prompt: str) -> dict | None:
+def _call_llm(prompt: str, max_turns: int = 100) -> dict | None:
     """Call Claude via Agent SDK with memory and project context enabled."""
     env = dict(__import__("os").environ)
     env.pop("ANTHROPIC_API_KEY", None)
@@ -386,11 +394,12 @@ asyncio.run(main())
 
     # Store stream path so the API can read it
     global _active_stream_path
-    _active_stream_path = stream_path
+    with _stream_lock:
+        _active_stream_path = stream_path
 
     try:
         r = subprocess.run(
-            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "100", factory_dir, stream_path],
+            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, str(max_turns), factory_dir, stream_path],
             capture_output=True, text=True, timeout=600, env=env,
         )
 
@@ -442,7 +451,8 @@ asyncio.run(main())
         logger.error("Foreman LLM error: %s", e)
         return None
     finally:
-        _active_stream_path = None
+        with _stream_lock:
+            _active_stream_path = None
         for p in [script_path, prompt_path, out_path, stream_path]:
             try:
                 Path(p).unlink(missing_ok=True)
