@@ -87,32 +87,9 @@ def _beat() -> list[str]:
     """Single heartbeat tick. Returns list of actions taken."""
     actions: list[str] = []
 
-    # 1. Garbage-collect zombie sessions (running state, no active worker)
-    actions.extend(_gc_zombie_sessions())
-
-    # 2. Reconcile backlog with completed sessions (includes abandoned)
-    actions.extend(_reconcile_backlog())
-
-    # 3. Check for stuck workers
-    actions.extend(_check_stuck_workers())
-
-    # 4. Check for empty backlog with projects needing human direction
-    actions.extend(_check_empty_backlog())
-
-    # 4b. Factory idle mode: emit factory-wide flag_human reminder (24h cooldown)
-    idle_flag = factory_idle_mode.check_and_flag()
-    if idle_flag:
-        actions.append(idle_flag)
-
-    # 5. Sweep orphaned healed-but-unverified sessions not covered by
-    #    backlog reconciliation (root cause of persistent alerts on
-    #    dispatch-factory, lawpass, recipebrain — see PR #32).
-    actions.extend(_sweep_orphaned_healed_sessions())
-
-    # 6. Reviewer calibration: test canary scenarios on cooldown
-    actions.extend(reviewer_calibration.check_and_run())
-
-    # 6b. Process completed workers (post-worker pipeline stages)
+    # 1. Process completed workers (post-worker pipeline stages)
+    #    Runs BEFORE zombie GC so that pipeline_runner can write -result.md
+    #    artifacts before sessions are marked abandoned.
     try:
         import pipeline_runner
         for completion in pipeline_runner.scan_for_completions():
@@ -120,11 +97,36 @@ def _beat() -> list[str]:
     except Exception as e:
         actions.append(f"pipeline_runner error: {e}")
 
-    # 7. Auto-dispatch pending tickets when capacity available
+    # 2. Garbage-collect zombie sessions (running state, no active worker)
+    actions.extend(_gc_zombie_sessions())
+
+    # 3. Reconcile backlog with completed sessions (includes abandoned)
+    actions.extend(_reconcile_backlog())
+
+    # 4. Check for stuck workers
+    actions.extend(_check_stuck_workers())
+
+    # 5. Check for empty backlog with projects needing human direction
+    actions.extend(_check_empty_backlog())
+
+    # 5b. Factory idle mode: emit factory-wide flag_human reminder (24h cooldown)
+    idle_flag = factory_idle_mode.check_and_flag()
+    if idle_flag:
+        actions.append(idle_flag)
+
+    # 6. Sweep orphaned healed-but-unverified sessions not covered by
+    #    backlog reconciliation (root cause of persistent alerts on
+    #    dispatch-factory, lawpass, recipebrain — see PR #32).
+    actions.extend(_sweep_orphaned_healed_sessions())
+
+    # 7. Reviewer calibration: test canary scenarios on cooldown
+    actions.extend(reviewer_calibration.check_and_run())
+
+    # 8. Auto-dispatch pending tickets when capacity available
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 8. Run foreman in background thread — every 5th beat (~2.5 min)
+    # 9. Run foreman in background thread — every 5th beat (~2.5 min)
     #    Foreman can take minutes with 100 turns. Must not block the event loop.
     if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 5 == 0:
         import threading
