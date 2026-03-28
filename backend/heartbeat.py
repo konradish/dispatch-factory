@@ -122,8 +122,9 @@ def _beat() -> list[str]:
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 8. Run foreman (LLM reasoning with rotating lens)
-    if _state.get("auto_dispatch_enabled", False):
+    # 8. Run foreman (LLM reasoning with rotating lens) — every 5th beat (~2.5 min)
+    #    Foreman now has 10 turns and can take up to 5 min, so don't run every 30s
+    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 5 == 0:
         try:
             import foreman
             result = foreman.run_foreman()

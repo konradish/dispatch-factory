@@ -344,8 +344,8 @@ asyncio.run(main())
 
     try:
         r = subprocess.run(
-            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "1", factory_dir],
-            capture_output=True, text=True, timeout=90, env=env,
+            ["uvx", "--with", "claude-agent-sdk", "python", script_path, prompt_path, out_path, "10", factory_dir],
+            capture_output=True, text=True, timeout=300, env=env,
         )
 
         if r.returncode != 0:
