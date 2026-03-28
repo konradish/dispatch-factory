@@ -69,7 +69,9 @@ async def heartbeat_loop(interval: int | None = None) -> None:
 
     while True:
         try:
-            actions = _beat()
+            # Run _beat in thread pool so it doesn't block the async event loop
+            loop = asyncio.get_event_loop()
+            actions = await loop.run_in_executor(None, _beat)
             _state["last_beat"] = time.time()
             _state["beats"] += 1
             _state["last_actions"] = actions
