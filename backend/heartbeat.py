@@ -480,6 +480,25 @@ def _gc_zombie_sessions() -> list[str]:
             actions.append(f"gc: abandoned {sid} (idle {int(age_minutes)}min)")
             logger.info("GC abandoned zombie session %s (idle %dmin)", sid, int(age_minutes))
 
+    # Kill tmux sessions for completed workers (state=worker_done) that pipeline_runner
+    # already processed (has result.md). These are dead shells sitting around.
+    import subprocess as _sp
+    for session in all_sessions:
+        sid = session["id"]
+        if session["state"] != "worker_done":
+            continue
+        result_path = artifacts._artifacts_path() / f"{sid}-result.md"
+        if not result_path.is_file():
+            continue  # Pipeline hasn't processed yet — leave it
+        # Check if tmux session still exists
+        try:
+            r = _sp.run(["tmux", "has-session", "-t", sid], capture_output=True, timeout=5)
+            if r.returncode == 0:
+                _sp.run(["tmux", "kill-session", "-t", sid], capture_output=True, timeout=5)
+                actions.append(f"gc: killed completed tmux {sid}")
+        except (_sp.TimeoutExpired, FileNotFoundError):
+            pass
+
     return actions
 
 

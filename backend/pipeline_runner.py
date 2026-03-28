@@ -126,6 +126,15 @@ def process_worker_completion(completion: dict) -> list[str]:
     _write_result(session_id, status, pr_url, task_short)
     actions.append(f"pipeline: {session_id} completed — {status}")
 
+    # Kill the tmux session — worker is done, shell is just sitting there
+    try:
+        import subprocess
+        subprocess.run(["tmux", "kill-session", "-t", session_id],
+                       capture_output=True, timeout=10)
+        actions.append(f"pipeline: killed tmux session {session_id}")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
     try:
         _send_ntfy(project, task_short, pr_url)
     except Exception as e:
