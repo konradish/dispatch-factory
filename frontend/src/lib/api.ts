@@ -158,6 +158,18 @@ export function updateBacklogTicket(
   });
 }
 
+export function addTicketNote(
+  id: string,
+  text: string,
+  author: string = "human",
+  status?: string
+): Promise<ApiResult<BacklogTicket>> {
+  return request<BacklogTicket>(`/api/backlog/${id}/note`, {
+    method: "POST",
+    body: JSON.stringify({ text, author, ...(status ? { status } : {}) }),
+  });
+}
+
 export function dispatchBacklogTicket(
   id: string
 ): Promise<ApiResult<{ status: string }>> {
