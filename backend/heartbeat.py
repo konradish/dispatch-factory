@@ -59,9 +59,15 @@ async def heartbeat_loop(interval: int | None = None) -> None:
     _state["started_at"] = time.time()
     logger.info("Heartbeat started (interval=%ds, auto_dispatch=%s)", interval, _state["auto_dispatch_enabled"])
 
-    # Run GC immediately on startup to catch zombies from before restart
+    # On startup, mirror _beat() step ordering: process completions BEFORE
+    # zombie GC so pipeline_runner can write -result.md artifacts before
+    # sessions are marked abandoned.
     try:
-        startup_actions = _gc_zombie_sessions()
+        import pipeline_runner
+        startup_actions: list[str] = []
+        for completion in pipeline_runner.scan_for_completions():
+            startup_actions.extend(pipeline_runner.process_worker_completion(completion))
+        startup_actions.extend(_gc_zombie_sessions())
         if startup_actions:
             logger.info("Startup GC: %s", startup_actions)
     except Exception:
