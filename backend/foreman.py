@@ -180,6 +180,7 @@ def _build_state_snapshot() -> str:
 
     # Backlog
     pending = backlog.list_tickets(status="pending")
+    dispatching = backlog.list_tickets(status="dispatching")
     dispatched = backlog.list_tickets(status="dispatched")
     on_hold = backlog.list_tickets(status="on_hold")
 
@@ -264,6 +265,9 @@ Sessions where the worker exited but tmux session remains. Use kill_session to c
 ### Backlog
 Pending: {len(pending)} tickets
 {json.dumps(pending, indent=2) if pending else "Empty."}
+
+Dispatching: {len(dispatching)} tickets (async dispatch in progress — if stuck >10 min, use update_ticket to set status to "pending" or "failed")
+{json.dumps(dispatching, indent=2) if dispatching else "None."}
 
 In-flight: {len(dispatched)} tickets
 {json.dumps(dispatched, indent=2) if dispatched else "None."}
