@@ -126,7 +126,7 @@ def _beat() -> list[str]:
 
     # 8. Run foreman in background thread — every 5th beat (~2.5 min)
     #    Foreman can take minutes with 100 turns. Must not block the event loop.
-    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 5 == 0:
+    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 20 == 0:
         import threading
         def _run_foreman_bg():
             try:
