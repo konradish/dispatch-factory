@@ -177,9 +177,29 @@ def get_calibration_state() -> dict:
     path = _calibration_path()
     if path.is_file():
         try:
-            return json.loads(path.read_text())
+            state = json.loads(path.read_text())
         except (json.JSONDecodeError, OSError):
-            pass
+            state = None
+
+        if state is not None:
+            # Migrate: backfill per_canary_last_result from run history
+            # if missing (pre-fix state files lack this field).
+            if "per_canary_last_result" not in state:
+                state["per_canary_last_result"] = _backfill_per_canary(
+                    state.get("runs", [])
+                )
+                # Recompute derived fields from per-canary state
+                failed = [
+                    cid for cid, r in state["per_canary_last_result"].items()
+                    if r == "fail"
+                ]
+                if failed:
+                    state["consecutive_failures"] = len(failed)
+                    state["consecutive_passes"] = 0
+                    state["failed_canaries"] = failed
+                _save_calibration_state(state)
+            return state
+
     return {
         "last_run": 0,
         "last_result": "never",
@@ -188,7 +208,31 @@ def get_calibration_state() -> dict:
         "consecutive_failures": 0,
         "total_canaries_tested": 0,
         "total_canaries_failed": 0,
+        # Per-canary tracking: maps canary_id -> "pass" | "fail" | "error"
+        # for the most recent result of each canary.  The reviewer is
+        # miscalibrated if ANY canary's last result is "fail".
+        "per_canary_last_result": {},
     }
+
+
+def _backfill_per_canary(runs: list[dict]) -> dict[str, str]:
+    """Derive per-canary last results from run history.
+
+    Iterates runs in order so the last occurrence of each canary_id wins.
+    """
+    per_canary: dict[str, str] = {}
+    for run in runs:
+        cid = run.get("canary_id", "")
+        if not cid:
+            continue
+        verdict = run.get("actual_verdict", "")
+        if verdict == "ERROR":
+            per_canary[cid] = "error"
+        elif run.get("passed", False):
+            per_canary[cid] = "pass"
+        else:
+            per_canary[cid] = "fail"
+    return per_canary
 
 
 def _save_calibration_state(state: dict) -> None:
@@ -240,11 +284,17 @@ def run_calibration() -> dict:
     state["last_run"] = time.time()
     state["total_canaries_tested"] = state.get("total_canaries_tested", 0) + 1
 
+    # Per-canary tracking: record the latest result for THIS canary.
+    # This prevents rotation from masking failures — a pass on "empty_diff"
+    # no longer erases a failure on "obvious_bug".
+    per_canary = state.get("per_canary_last_result", {})
+
     if verdict["verdict"] == "ERROR":
         # LLM invocation failed — track consecutive errors so we can detect
         # a broken calibration pipeline (no real pass/fail ever recorded).
         state["last_result"] = "error"
         state["consecutive_errors"] = state.get("consecutive_errors", 0) + 1
+        per_canary[canary["id"]] = "error"
         # Don't reset consecutive_passes/failures — errors are indeterminate
         logger.error(
             "Calibration ERROR: canary '%s' — LLM call failed (%d consecutive)",
@@ -252,23 +302,42 @@ def run_calibration() -> dict:
         )
     elif result["passed"]:
         state["last_result"] = "pass"
-        state["consecutive_passes"] = state.get("consecutive_passes", 0) + 1
-        state["consecutive_failures"] = 0
         state["consecutive_errors"] = 0
+        per_canary[canary["id"]] = "pass"
         logger.info(
             "Calibration PASSED: canary '%s' correctly rejected", canary["id"],
         )
     else:
         state["last_result"] = "fail"
-        state["consecutive_failures"] = state.get("consecutive_failures", 0) + 1
-        state["consecutive_passes"] = 0
         state["consecutive_errors"] = 0
+        per_canary[canary["id"]] = "fail"
         state["total_canaries_failed"] = state.get("total_canaries_failed", 0) + 1
         logger.warning(
             "Calibration FAILED: canary '%s' was APPROVED — reviewer is miscalibrated! "
             "Expected REQUEST_CHANGES, got %s",
             canary["id"], verdict["verdict"],
         )
+
+    state["per_canary_last_result"] = per_canary
+
+    # Derive consecutive_failures / consecutive_passes from per-canary state.
+    # The reviewer is miscalibrated if ANY canary's last result is "fail".
+    # Previously, rotation through canaries would reset consecutive_failures
+    # whenever a different canary passed — masking persistent failures on
+    # specific canaries (e.g., obvious_bug failed 4/5 times but was never
+    # blocked because empty_diff always passed in between).
+    failed_canaries = [cid for cid, r in per_canary.items() if r == "fail"]
+    if failed_canaries:
+        state["consecutive_failures"] = max(
+            state.get("consecutive_failures", 0) + 1 if not result["passed"] else 1,
+            len(failed_canaries),
+        )
+        state["consecutive_passes"] = 0
+        state["failed_canaries"] = failed_canaries
+    else:
+        state["consecutive_failures"] = 0
+        state["consecutive_passes"] = state.get("consecutive_passes", 0) + 1
+        state.pop("failed_canaries", None)
 
     # Keep last 20 runs
     runs.append(result)
@@ -506,25 +575,37 @@ def check_and_run() -> list[str]:
         return actions
 
     if result.get("passed"):
-        actions.append(
-            f"reviewer-calibration: canary '{result['canary_id']}' "
-            f"correctly rejected — reviewer calibrated"
-        )
+        state = get_calibration_state()
+        failed_canaries = state.get("failed_canaries", [])
+        if failed_canaries:
+            # This canary passed but others are still failing
+            actions.append(
+                f"reviewer-calibration: canary '{result['canary_id']}' "
+                f"correctly rejected, but {len(failed_canaries)} canary(s) still "
+                f"failing: {', '.join(failed_canaries)} — reviewer remains miscalibrated"
+            )
+        else:
+            actions.append(
+                f"reviewer-calibration: canary '{result['canary_id']}' "
+                f"correctly rejected — reviewer calibrated"
+            )
     else:
         state = get_calibration_state()
-        consecutive = state.get("consecutive_failures", 1)
+        failed_canaries = state.get("failed_canaries", [result["canary_id"]])
         actions.append(
             f"flag_human(reviewer_miscalibrated): canary '{result['canary_id']}' "
             f"({result.get('canary_name', '')}) was APPROVED by reviewer — "
             f"expected REQUEST_CHANGES. "
-            f"Consecutive calibration failures: {consecutive}. "
+            f"Failing canaries: {', '.join(failed_canaries)}. "
             f"Reviewer feedback: {result.get('reviewer_feedback', 'none')[:200]}"
         )
         logger.critical(
             "REVIEWER MISCALIBRATED: canary '%s' approved. "
+            "Failing canaries: %s. "
             "The reviewer cannot distinguish known-bad PRs from good ones. "
             "Human intervention required.",
             result["canary_id"],
+            ", ".join(failed_canaries),
         )
 
     return actions
