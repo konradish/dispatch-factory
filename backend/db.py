@@ -93,6 +93,14 @@ CREATE TABLE IF NOT EXISTS ticket_notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_ticket ON ticket_notes(ticket_id);
 
+CREATE TABLE IF NOT EXISTS foreman_chat (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL,
+    text TEXT NOT NULL,
+    actions TEXT NOT NULL DEFAULT '[]',
+    timestamp REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     project TEXT NOT NULL,

@@ -230,3 +230,15 @@ export interface SessionOutput {
 export function fetchSessionOutput(id: string, lines = 20): Promise<ApiResult<SessionOutput>> {
   return request<SessionOutput>(`/api/sessions/${id}/output?lines=${lines}`);
 }
+
+// Foreman chat history
+export interface ChatMessage {
+  role: "human" | "foreman";
+  text: string;
+  actions: ForemanResult["actions"];
+  timestamp: number;
+}
+
+export function fetchChatHistory(limit = 50): Promise<ApiResult<ChatMessage[]>> {
+  return request<ChatMessage[]>(`/api/foreman/chat/history?limit=${limit}`);
+}

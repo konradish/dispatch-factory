@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { foremanChat } from "@/lib/api";
+import { foremanChat, fetchChatHistory } from "@/lib/api";
 import type { ForemanResult } from "@/lib/api";
 
 interface Message {
@@ -31,7 +31,15 @@ export default function ForemanChat({ visible, onClose }: ForemanChatProps) {
 
   useEffect(() => {
     if (visible && inputRef.current) inputRef.current.focus();
-  }, [visible]);
+    // Load chat history on first open
+    if (visible && messages.length === 0) {
+      fetchChatHistory(50).then((r) => {
+        if (r.data && r.data.length > 0) {
+          setMessages(r.data.map((m) => ({ role: m.role, text: m.text, timestamp: m.timestamp, actions: m.actions })));
+        }
+      });
+    }
+  }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSend() {
     const text = input.trim();

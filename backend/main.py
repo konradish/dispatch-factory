@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import subprocess
@@ -1026,6 +1027,18 @@ async def run_foreman_now(lens_id: str | None = None) -> dict:
     return foreman.run_foreman(lens_id=lens_id)
 
 
+@app.get("/api/foreman/chat/history")
+async def foreman_chat_history(limit: int = 50) -> list[dict]:
+    """Return recent foreman chat messages."""
+    import db
+    with db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT role, text, actions, timestamp FROM foreman_chat ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    return [{"role": r["role"], "text": r["text"], "actions": json.loads(r["actions"]), "timestamp": r["timestamp"]} for r in reversed(rows)]
+
+
 @app.post("/api/foreman/chat")
 async def foreman_chat(body: dict) -> dict:
     """Chat with the foreman — run a foreman cycle with a human message injected."""
@@ -1033,7 +1046,26 @@ async def foreman_chat(body: dict) -> dict:
     message = (body.get("message") or "").strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required")
-    return foreman.run_foreman(human_message=message)
+
+    # Persist human message
+    import db
+    import time
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_chat (role, text, actions, timestamp) VALUES (?, ?, ?, ?)",
+            ("human", message, "[]", time.time()),
+        )
+
+    result = foreman.run_foreman(human_message=message)
+
+    # Persist foreman response
+    with db.get_conn() as conn:
+        conn.execute(
+            "INSERT INTO foreman_chat (role, text, actions, timestamp) VALUES (?, ?, ?, ?)",
+            ("foreman", result.get("assessment", ""), json.dumps(result.get("actions", [])), result.get("timestamp", time.time())),
+        )
+
+    return result
 
 
 # ---------------------------------------------------------------------------
