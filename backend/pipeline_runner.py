@@ -28,6 +28,16 @@ ARTIFACT_TYPES = {
     "-error.json": "error",
 }
 
+# Project config — mirrors dispatch CLI PROJECTS dict
+PROJECT_CONFIG = {
+    "recipebrain": {"path": "/mnt/c/projects/meal_tracker", "test_cmd": "make test"},
+    "electricapp": {"path": "/mnt/c/projects/electric-app", "test_cmd": "make test"},
+    "dispatch-factory": {"path": "/mnt/c/projects/dispatch-factory", "test_cmd": "cd backend && uv run ruff check . && cd ../frontend && npx tsc -b --noEmit"},
+    "lawpass": {"path": "/mnt/c/projects/lawpass-ai", "test_cmd": "make test"},
+    "movies": {"path": "/mnt/c/projects/family-movies", "test_cmd": "make test"},
+    "schoolbrain": {"path": "/mnt/c/projects/schoolbrain", "test_cmd": "make test"},
+}
+
 
 def scan_for_completions() -> list[dict]:
     """Find worker-done artifacts that haven't been processed yet (no result.md)."""
@@ -86,15 +96,28 @@ def process_worker_completion(completion: dict) -> list[str]:
         else:
             actions.append(f"pipeline: {session_id} PR auto-merge failed")
 
-    # Code tasks with auto_merge: run reviewer then merge
+    # Code tasks with auto_merge: validate → merge
     elif task_type == "code" and auto_merge and pr_url:
-        # TODO: Add LLM reviewer stage here (claude_reason reviews diff)
-        # For now, auto-merge code PRs too — reviewer will be added incrementally
-        merge_ok = _auto_merge_pr(pr_url, project, session_id)
-        if merge_ok:
-            actions.append(f"pipeline: {session_id} PR merged (code, reviewer pending)")
+        # Step 1: Validate (run tests on the PR branch)
+        validate_ok = _run_validation(project, pr_url, session_id)
+        if validate_ok:
+            actions.append(f"pipeline: {session_id} validation passed")
+            # Step 2: Merge
+            merge_ok = _auto_merge_pr(pr_url, project, session_id)
+            if merge_ok:
+                actions.append(f"pipeline: {session_id} PR merged")
+            else:
+                actions.append(f"pipeline: {session_id} PR merge failed")
         else:
-            actions.append(f"pipeline: {session_id} PR merge failed")
+            actions.append(f"pipeline: {session_id} validation FAILED — PR left as draft")
+
+    # Code tasks without auto_merge but with PR: still validate
+    elif task_type == "code" and pr_url:
+        validate_ok = _run_validation(project, pr_url, session_id)
+        if validate_ok:
+            actions.append(f"pipeline: {session_id} validation passed (draft PR, manual merge)")
+        else:
+            actions.append(f"pipeline: {session_id} validation FAILED")
 
     status = "SUCCESS"
     if pr_url:
@@ -111,26 +134,75 @@ def process_worker_completion(completion: dict) -> list[str]:
     return actions
 
 
+def _get_project_path(project: str) -> str:
+    """Get project directory path."""
+    cfg = PROJECT_CONFIG.get(project, {})
+    return cfg.get("path", "/tmp")
+
+
+def _run_validation(project: str, pr_url: str, session_id: str) -> bool:
+    """Checkout PR branch, run tests, return to main. Returns True if tests pass."""
+    import subprocess
+
+    cfg = PROJECT_CONFIG.get(project, {})
+    cwd = cfg.get("path", "/tmp")
+    test_cmd = cfg.get("test_cmd", "make test")
+
+    logger.info("Running validation for %s: %s", session_id, test_cmd)
+
+    try:
+        # Checkout the PR branch
+        r = subprocess.run(
+            ["gh", "pr", "checkout", pr_url],
+            cwd=cwd, capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode != 0:
+            logger.warning("Could not checkout PR: %s", r.stderr[:200])
+            return False
+
+        # Run tests
+        r = subprocess.run(
+            test_cmd, shell=True,
+            cwd=cwd, capture_output=True, text=True, timeout=300,
+        )
+        passed = r.returncode == 0
+
+        if not passed:
+            logger.warning("Validation failed for %s: %s", session_id, r.stdout[-300:] + r.stderr[-300:])
+            # Write validation failure artifact
+            artifacts_dir = Path(settings.artifacts_dir)
+            val_path = artifacts_dir / f"{session_id}-validate.json"
+            val_path.write_text(json.dumps({
+                "passed": False,
+                "test_cmd": test_cmd,
+                "output": (r.stdout[-500:] + r.stderr[-500:]).strip(),
+                "timestamp": time.time(),
+            }, indent=2))
+        else:
+            logger.info("Validation passed for %s", session_id)
+
+        # Return to main regardless
+        subprocess.run(["git", "checkout", "main"], cwd=cwd, capture_output=True, timeout=10)
+        subprocess.run(["git", "pull", "origin", "main"], cwd=cwd, capture_output=True, timeout=15)
+
+        return passed
+
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning("Validation error for %s: %s", session_id, e)
+        subprocess.run(["git", "checkout", "main"], cwd=cwd, capture_output=True, timeout=10)
+        return False
+
+
 def _auto_merge_pr(pr_url: str, project: str, session_id: str) -> bool:
     """Merge a PR via gh CLI. Returns True on success."""
     import subprocess
-    # Extract repo path from PR URL: https://github.com/owner/repo/pull/123
     import re
     m = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/(\d+)", pr_url)
     if not m:
         logger.warning("Cannot parse PR URL: %s", pr_url)
         return False
 
-    # Find project path from PROJECTS config
-    project_paths = {
-        "recipebrain": "/mnt/c/projects/meal_tracker",
-        "electricapp": "/mnt/c/projects/electric-app",
-        "dispatch-factory": "/mnt/c/projects/dispatch-factory",
-        "lawpass": "/mnt/c/projects/lawpass-ai",
-        "movies": "/mnt/c/projects/family-movies",
-        "schoolbrain": "/mnt/c/projects/schoolbrain",
-    }
-    cwd = project_paths.get(project, "/tmp")
+    cwd = _get_project_path(project)
 
     try:
         # Mark PR as ready (un-draft), then merge
