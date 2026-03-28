@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -24,6 +26,49 @@ import pipeline
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.foreman")
+
+
+def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
+    """Fire-and-forget dispatch via Popen. Returns immediately.
+
+    Marks ticket as 'dispatching', spawns subprocess in background thread
+    that waits for exit, parses session ID, and calls mark_dispatched.
+    The heartbeat picks up completion artifacts independently.
+    """
+    backlog.update_ticket(ticket_id, {"status": "dispatching"})
+    try:
+        log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
+        log_file = open(log_path, "w")
+        proc = subprocess.Popen(
+            cmd, stdout=log_file, stderr=subprocess.STDOUT,
+        )
+    except FileNotFoundError as e:
+        backlog.update_ticket(ticket_id, {"status": "pending"})
+        return {"status": "error", "detail": str(e)}
+
+    def _wait():
+        try:
+            proc.wait(timeout=600)  # 10 min hard ceiling
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            logger.error("dispatch subprocess killed after 600s for ticket %s", ticket_id)
+            backlog.update_ticket(ticket_id, {"status": "pending"})
+            return
+        finally:
+            log_file.close()
+
+        stdout = log_path.read_text()
+        if proc.returncode == 0:
+            match = re.search(r"session\s*:\s*([\w-]+)", stdout)
+            session_id = match.group(1) if match else "unknown"
+            backlog.mark_dispatched(ticket_id, session_id)
+            logger.info("dispatch ok for %s → %s", ticket_id, session_id)
+        else:
+            logger.error("dispatch failed for %s (rc=%d): %s", ticket_id, proc.returncode, stdout[:200])
+            backlog.update_ticket(ticket_id, {"status": "pending"})
+
+    threading.Thread(target=_wait, daemon=True, name=f"dispatch-{ticket_id[:8]}").start()
+    return {"status": "ok", "detail": "dispatch started (async)"}
 
 PROMPTS_DIR = Path(__file__).parent / "foreman-prompts"
 
@@ -487,17 +532,8 @@ def _execute_action(action: dict) -> dict:
         if task_type != "code":
             cmd.extend(["--type", task_type])
         cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if r.returncode == 0:
-                import re
-                match = re.search(r"session\s*:\s*([\w-]+)", r.stdout)
-                session_id = match.group(1) if match else "unknown"
-                backlog.mark_dispatched(ticket_id, session_id)
-                return {"type": "dispatch", "status": "ok", "ticket_id": ticket_id, "session_id": session_id}
-            return {"type": "dispatch", "status": "error", "detail": r.stderr[:200]}
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            return {"type": "dispatch", "status": "error", "detail": str(e)}
+        result = _dispatch_async(cmd, ticket_id)
+        return {"type": "dispatch", "ticket_id": ticket_id, **result}
 
     elif action_type == "create_ticket":
         task = action.get("task", "")
@@ -650,21 +686,11 @@ def _execute_action(action: dict) -> dict:
         # Create ticket and dispatch immediately
         ticket = backlog.create_ticket(task, project, priority="high", source="foreman", task_type=task_type)
         ticket_id = ticket["id"]
-        # Dispatch
         cmd = [settings.dispatch_bin, task, "--project", project]
         if task_type != "code":
             cmd.extend(["--type", task_type])
-        try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            if r.returncode == 0:
-                import re
-                match = re.search(r"session\s*:\s*([\w-]+)", r.stdout)
-                session_id = match.group(1) if match else "unknown"
-                backlog.mark_dispatched(ticket_id, session_id)
-                return {"type": action_type, "status": "ok", "ticket_id": ticket_id, "session_id": session_id, "detail": f"Worker spawned: {session_id}"}
-            return {"type": action_type, "status": "error", "detail": f"Dispatch failed: {r.stderr[:200]}"}
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            return {"type": action_type, "status": "error", "detail": str(e)}
+        result = _dispatch_async(cmd, ticket_id)
+        return {"type": action_type, "ticket_id": ticket_id, **result}
 
     return {"type": action_type, "status": "unknown_action"}
 

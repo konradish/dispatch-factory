@@ -146,10 +146,10 @@ def next_pending(project: str | None = None) -> dict | None:
 
 
 def has_inflight_ticket(project: str) -> bool:
-    """Check if a project already has a dispatched (in-flight) ticket."""
+    """Check if a project already has a dispatched or dispatching (in-flight) ticket."""
     with db.get_conn() as conn:
         row = conn.execute(
-            "SELECT 1 FROM tickets WHERE status = 'dispatched' AND project = ? LIMIT 1",
+            "SELECT 1 FROM tickets WHERE status IN ('dispatched', 'dispatching') AND project = ? LIMIT 1",
             (project,),
         ).fetchone()
         return row is not None

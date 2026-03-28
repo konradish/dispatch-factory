@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ logger = logging.getLogger("dispatch-factory")
 # ---------------------------------------------------------------------------
 
 SESSION_ID_RE = re.compile(r"^(?:worker|deploy|validate)-[a-z][a-z0-9-]*-\d+$")
+SESSION_ID_EXTERNAL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9._-]{2,80}$")
 PROJECT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--no-heal"])
 
@@ -104,6 +106,17 @@ class TicketRequest(BaseModel):
     task: str
     project: str
     flags: list[str] = []
+
+
+class DispatchRequest(BaseModel):
+    """Unified dispatch — create ticket + dispatch, or dispatch existing ticket."""
+    task: str | None = None
+    project: str | None = None
+    ticket_id: str | None = None
+    priority: str = "normal"
+    task_type: str = "code"
+    flags: list[str] = []
+    source: str = "interactive"
 
 
 # ---------------------------------------------------------------------------
@@ -292,42 +305,28 @@ async def websocket_endpoint(ws: WebSocket) -> None:
 
 @app.post("/api/tickets")
 async def create_ticket(req: TicketRequest) -> dict[str, str]:
+    """Legacy direct dispatch — creates ticket and dispatches via unified path."""
     _require_controls()
 
-    # Validate project name.
     if not PROJECT_NAME_RE.match(req.project):
         raise HTTPException(status_code=400, detail="Invalid project name")
-
-    # Validate task.
     task = req.task.strip()
     if not task or len(task) > 500:
         raise HTTPException(status_code=400, detail="Task must be 1-500 characters")
     _validate_task_quality(task)
-
-    # Validate flags against allowlist.
     for flag in req.flags:
         if flag not in ALLOWED_FLAGS:
             raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
 
-    cmd: list[str] = [settings.dispatch_bin, task, "--project", req.project]
-    cmd.extend(req.flags)
-
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="dispatch binary not found")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="dispatch timed out")
+    ticket = backlog.create_ticket(task=task, project=req.project, flags=req.flags, source="ui-legacy")
+    _run_dispatch_guards(ticket)
+    cmd = _build_dispatch_cmd(ticket)
+    result = foreman._dispatch_async(cmd, ticket["id"])
 
     return {
-        "status": "dispatched" if result.returncode == 0 else "error",
-        "stdout": result.stdout,
-        "stderr": result.stderr,
+        "status": result["status"],
+        "ticket_id": ticket["id"],
+        "detail": result.get("detail", ""),
     }
 
 
@@ -558,60 +557,69 @@ async def get_ticket_thread(ticket_id: str) -> list[dict]:
 
 @app.post("/api/backlog/{ticket_id}/dispatch")
 async def dispatch_backlog_ticket(ticket_id: str) -> dict:
-    """Dispatch a pending backlog ticket immediately."""
+    """Dispatch a pending backlog ticket immediately. Delegates to unified dispatch."""
     _require_controls()
 
     tickets = backlog.list_tickets()
     ticket = next((t for t in tickets if t["id"] == ticket_id), None)
     if not ticket:
         raise HTTPException(status_code=404, detail="Ticket not found")
-    if ticket["status"] not in ("pending", "ready"):
-        raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending or ready")
 
-    # Factory idle mode: hard stop — no dispatches when all projects need human input
+    _run_dispatch_guards(ticket)
+
+    cmd = _build_dispatch_cmd(ticket)
+    result = foreman._dispatch_async(cmd, ticket_id)
+
+    return {
+        "status": result["status"],
+        "ticket_id": ticket_id,
+        "detail": result.get("detail", ""),
+        "source": "ui",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unified dispatch
+# ---------------------------------------------------------------------------
+
+def _run_dispatch_guards(ticket: dict) -> None:
+    """Shared pre-dispatch guards. Raises HTTPException on any block."""
+    if ticket["status"] not in ("pending", "ready", "intake", "needs_input"):
+        raise HTTPException(status_code=400, detail=f"Ticket is {ticket['status']}, must be pending/ready")
+
     if factory_idle_mode.is_idle():
         raise HTTPException(
             status_code=409,
-            detail="Factory idle mode: all active projects have HUMAN INPUT NEEDED "
-            "and backlog is empty. Provide direction before dispatching.",
+            detail="Factory idle mode: all active projects need human input. Provide direction first.",
         )
 
-    # Reviewer calibration gate: block dispatch if reviewer is known-miscalibrated
     cal_state = reviewer_calibration.get_calibration_state()
     if cal_state.get("consecutive_failures", 0) > 0:
         raise HTTPException(
             status_code=409,
-            detail="Reviewer miscalibrated — last canary test was approved when it should "
-            "have been rejected. Run /api/reviewer-calibration to re-test after fixing.",
+            detail="Reviewer miscalibrated — run /api/reviewer-calibration to re-test.",
         )
 
-    # Task quality gate: reject vague tasks before dispatch
     _validate_task_quality(ticket["task"].strip())
 
-    # Pre-dispatch guard: reject if project already has an in-flight ticket
     if backlog.has_inflight_ticket(ticket["project"]):
         raise HTTPException(
             status_code=409,
             detail=f"Project {ticket['project']} already has an in-flight ticket",
         )
 
-    # Circuit breaker: block dispatches to tripped projects
     if circuit_breaker.is_project_blocked(ticket["project"]):
         raise HTTPException(
             status_code=409,
-            detail=f"Circuit breaker tripped for {ticket['project']} — fix deploy pipeline first",
+            detail=f"Circuit breaker tripped for {ticket['project']}",
         )
 
-    # Meta-work ratio: block dispatch-factory work when ratio is too high
     if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
         raise HTTPException(
             status_code=409,
-            detail="Meta-work ratio exceeded — 60% or more of recent sessions are "
-            "dispatch-factory. Dispatch a product session first, or escalate to urgent (human only).",
+            detail="Meta-work ratio exceeded — dispatch a product session first.",
         )
 
-    # Priority inversion guard: block lower-priority dispatch when eligible
-    # higher-priority tickets are pending and capacity is at max
     active = artifacts.get_active_sessions()
     max_concurrent = heartbeat._state.get("max_concurrent", 3)
     if len(active) >= max_concurrent - 1 and backlog.has_eligible_higher_priority(ticket.get("priority", "normal")):
@@ -620,23 +628,117 @@ async def dispatch_backlog_ticket(ticket_id: str) -> dict:
             detail="Higher-priority tickets are pending; dispatch those first",
         )
 
-    cmd: list[str] = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
-    cmd.extend(ticket.get("flags", []))
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="dispatch binary not found")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="dispatch timed out")
+def _build_dispatch_cmd(ticket: dict) -> list[str]:
+    """Build the dispatch CLI command from a ticket."""
+    valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
+    cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
+    task_type = ticket.get("task_type", "code")
+    if task_type != "code":
+        cmd.extend(["--type", task_type])
+    cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
+    return cmd
 
-    if result.returncode == 0:
-        match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
-        session_id = match.group(1) if match else "unknown"
-        backlog.mark_dispatched(ticket_id, session_id)
-        return {"status": "dispatched", "session_id": session_id, "stdout": result.stdout}
 
-    return {"status": "error", "stderr": result.stderr}
+@app.post("/api/dispatch")
+async def unified_dispatch(req: DispatchRequest) -> dict:
+    """Unified dispatch endpoint — any caller (UI, CLI, interactive, foreman)."""
+    _require_controls()
+
+    if req.ticket_id:
+        tickets = backlog.list_tickets()
+        ticket = next((t for t in tickets if t["id"] == req.ticket_id), None)
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+    elif req.task and req.project:
+        if not PROJECT_NAME_RE.match(req.project):
+            raise HTTPException(status_code=400, detail="Invalid project name")
+        task = req.task.strip()
+        if not task or len(task) > 500:
+            raise HTTPException(status_code=400, detail="Task must be 1-500 characters")
+        _validate_task_quality(task)
+        for flag in req.flags:
+            if flag not in ALLOWED_FLAGS:
+                raise HTTPException(status_code=400, detail=f"Flag not allowed: {flag}")
+        if req.priority not in ("low", "normal", "high", "urgent"):
+            raise HTTPException(status_code=400, detail="Priority must be low/normal/high/urgent")
+
+        ticket = backlog.create_ticket(
+            task=task, project=req.project, priority=req.priority,
+            flags=req.flags, source=req.source, task_type=req.task_type,
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Provide either ticket_id, or task + project")
+
+    _run_dispatch_guards(ticket)
+    cmd = _build_dispatch_cmd(ticket)
+    result = foreman._dispatch_async(cmd, ticket["id"])
+
+    return {
+        "status": result["status"],
+        "ticket_id": ticket["id"],
+        "detail": result.get("detail", ""),
+        "source": req.source,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Session registration (external workers)
+# ---------------------------------------------------------------------------
+
+@app.post("/api/sessions/{session_id}/register")
+async def register_session(session_id: str, body: dict) -> dict:
+    """Register an externally-spawned worker so the factory tracks it."""
+    _require_controls()
+
+    if not SESSION_ID_EXTERNAL_RE.match(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session ID format")
+
+    project = body.get("project", "")
+    if not project or not PROJECT_NAME_RE.match(project):
+        raise HTTPException(status_code=400, detail="Valid project name required")
+
+    task = body.get("task", "").strip()
+    if not task:
+        raise HTTPException(status_code=400, detail="Task description required")
+
+    source = body.get("source", "external")
+    session_type = body.get("type", "worker")
+
+    import db
+    with db.get_conn() as conn:
+        existing = conn.execute("SELECT id, state FROM sessions WHERE id = ?", (session_id,)).fetchone()
+        if existing:
+            return {"status": "already_registered", "session_id": session_id, "state": existing["state"]}
+
+        alive = False
+        try:
+            result = subprocess.run(
+                ["tmux", "has-session", "-t", session_id],
+                capture_output=True, timeout=5,
+            )
+            alive = result.returncode == 0
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        db.upsert_session(
+            conn, session_id,
+            project=project, type=session_type, task=task[:200],
+            state="running" if alive else "registered",
+            has_log=0, mtime=time.time(), artifact_types="[]",
+            summary=json.dumps({"source": source, "registered": True}),
+        )
+
+    existing_tickets = [t for t in backlog.list_tickets() if t.get("session_id") == session_id]
+    ticket_id = None
+    if not existing_tickets:
+        ticket = backlog.create_ticket(task=task, project=project, source=source, status="dispatched")
+        backlog.update_ticket(ticket["id"], {"session_id": session_id, "dispatched_at": time.time()})
+        ticket_id = ticket["id"]
+    else:
+        ticket_id = existing_tickets[0]["id"]
+
+    return {"status": "registered", "session_id": session_id, "ticket_id": ticket_id, "alive": alive}
 
 
 # ---------------------------------------------------------------------------

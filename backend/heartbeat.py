@@ -620,27 +620,12 @@ def _auto_dispatch() -> list[str]:
             cmd.extend(["--type", task_type])
         cmd.extend(f for f in ticket.get("flags", []) if f in valid_flags)
 
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode == 0:
-                # Extract session ID from stdout
-                import re
-                match = re.search(r"session\s*:\s*([\w-]+)", result.stdout)
-                session_id = match.group(1) if match else "unknown"
-                backlog.mark_dispatched(ticket["id"], session_id)
-                dispatched_count += 1
-                actions.append(f"auto-dispatched {ticket['id']} → {session_id}")
-            else:
-                actions.append(f"dispatch failed for {ticket['id']}: {result.stderr[:100]}")
-        except subprocess.TimeoutExpired:
-            actions.append(f"dispatch timeout for {ticket['id']}")
-        except FileNotFoundError:
-            actions.append("dispatch binary not found")
-            break
+        from foreman import _dispatch_async
+        result = _dispatch_async(cmd, ticket["id"])
+        if result["status"] == "ok":
+            dispatched_count += 1
+            actions.append(f"auto-dispatched {ticket['id']} (async)")
+        else:
+            actions.append(f"dispatch failed for {ticket['id']}: {result.get('detail', 'unknown')}")
 
     return actions
