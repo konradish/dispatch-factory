@@ -68,6 +68,8 @@ def init_db() -> None:
             id TEXT PRIMARY KEY, title TEXT NOT NULL,
             created_at REAL NOT NULL, last_message_at REAL NOT NULL,
             message_count INTEGER NOT NULL DEFAULT 0, summary TEXT)""")
+        # Create index on thread_id (after migration ensures column exists)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_thread ON foreman_chat(thread_id)")
     _migrate_from_json()
     _migrate_sessions_from_disk()
 
@@ -112,8 +114,6 @@ CREATE TABLE IF NOT EXISTS foreman_chat (
     actions TEXT NOT NULL DEFAULT '[]',
     timestamp REAL NOT NULL
 );
-
-CREATE INDEX IF NOT EXISTS idx_chat_thread ON foreman_chat(thread_id);
 
 CREATE TABLE IF NOT EXISTS foreman_threads (
     id TEXT PRIMARY KEY,
