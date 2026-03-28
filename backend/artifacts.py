@@ -363,12 +363,23 @@ def get_autopilot_state() -> dict | None:
 def list_sessions_with_timestamps() -> list[dict]:
     """Return sessions with timestamps and summaries from SQLite cache (fast)."""
     import db
+    import time as _time
     _refresh_new_sessions()
-    # Also refresh state for recent running sessions
+    # Refresh state for sessions marked "running" in cache
+    active_ids = {s["id"] for s in get_active_sessions()}
     with db.get_conn() as conn:
-        running = conn.execute("SELECT id FROM sessions WHERE state = 'running' LIMIT 10").fetchall()
+        running = conn.execute("SELECT id FROM sessions WHERE state = 'running' LIMIT 20").fetchall()
     for r in running:
-        _update_session_state(r["id"])
+        sid = r["id"]
+        _update_session_state(sid)
+        # If still "running" after re-scan but no tmux process → mark abandoned
+        with db.get_conn() as conn:
+            row = conn.execute("SELECT state FROM sessions WHERE id = ?", (sid,)).fetchone()
+            if row and row["state"] == "running" and sid not in active_ids:
+                conn.execute(
+                    "UPDATE sessions SET state = 'abandoned', updated_at = ? WHERE id = ?",
+                    (_time.time(), sid),
+                )
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM sessions ORDER BY mtime DESC"

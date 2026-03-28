@@ -541,16 +541,24 @@ def _execute_action(action: dict) -> dict:
         session_id = action.get("session_id", "")
         if not session_id or not artifacts.SESSION_RE.match(session_id):
             return {"type": action_type, "status": "error", "detail": "Invalid session_id"}
-        # Guard: only kill zombie sessions (bare shell, not actively running)
-        zombies = artifacts.get_zombie_sessions()
-        zombie_ids = {z["id"] for z in zombies}
-        if session_id not in zombie_ids:
-            return {"type": action_type, "status": "blocked", "detail": f"Session '{session_id}' is not a zombie — refusing to kill"}
+        # Guard: don't kill actively running workers
+        active_ids = {s["id"] for s in artifacts.get_active_sessions()}
+        if session_id in active_ids:
+            return {"type": action_type, "status": "blocked", "detail": f"Session '{session_id}' has an active worker — refusing to kill"}
+        # Kill tmux session if it exists, and update cache
         try:
             subprocess.run(["tmux", "kill-session", "-t", session_id], capture_output=True, timeout=10)
-            return {"type": action_type, "status": "ok", "session_id": session_id}
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            return {"type": action_type, "status": "error", "detail": str(e)}
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass  # Session may already be gone
+        # Update cache to mark as abandoned
+        import db
+        import time as _time
+        with db.get_conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET state = 'abandoned', updated_at = ? WHERE id = ? AND state = 'running'",
+                (_time.time(), session_id),
+            )
+        return {"type": action_type, "status": "ok", "session_id": session_id}
 
     elif action_type == "add_ticket_note":
         ticket_id = action.get("ticket_id", "")
