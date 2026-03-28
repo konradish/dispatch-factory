@@ -1092,7 +1092,10 @@ async def foreman_chat(body: dict) -> dict:
             (thread_id, "human", message, "[]", now),
         )
 
-    result = foreman.run_foreman(human_message=message)
+    # Run foreman in thread to avoid blocking other API requests
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, lambda: foreman.run_foreman(human_message=message))
 
     # Persist foreman response
     with db.get_conn() as conn:

@@ -122,18 +122,25 @@ def _beat() -> list[str]:
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 8. Run foreman (LLM reasoning with rotating lens) — every 5th beat (~2.5 min)
-    #    Foreman now has 10 turns and can take up to 5 min, so don't run every 30s
+    # 8. Run foreman in background thread — every 5th beat (~2.5 min)
+    #    Foreman can take minutes with 100 turns. Must not block the event loop.
     if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 5 == 0:
-        try:
-            import foreman
-            result = foreman.run_foreman()
-            if result.get("actions"):
-                actions.append(f"foreman[{result.get('lens', '?')}]: {len(result['actions'])} actions")
-            elif result.get("assessment"):
-                actions.append(f"foreman[{result.get('lens', '?')}]: {result['assessment'][:80]}")
-        except Exception as e:
-            actions.append(f"foreman error: {e}")
+        import threading
+        def _run_foreman_bg():
+            try:
+                import foreman
+                result = foreman.run_foreman()
+                summary = ""
+                if result.get("actions"):
+                    summary = f"foreman[{result.get('lens', '?')}]: {len(result['actions'])} actions"
+                elif result.get("assessment"):
+                    summary = f"foreman[{result.get('lens', '?')}]: {result['assessment'][:80]}"
+                if summary:
+                    _state["last_actions"] = _state.get("last_actions", []) + [summary]
+            except Exception as e:
+                _state["last_actions"] = _state.get("last_actions", []) + [f"foreman error: {e}"]
+        threading.Thread(target=_run_foreman_bg, daemon=True).start()
+        actions.append("foreman: started in background")
 
     return actions
 
