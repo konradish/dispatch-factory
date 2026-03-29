@@ -1141,6 +1141,47 @@ async def foreman_stream(after: int = 0) -> dict:
     return {"events": events, "next": next_line}
 
 
+@app.get("/api/foreman/decisions")
+async def foreman_decisions(limit: int = 20) -> list[dict]:
+    """Return recent foreman decisions — what was chosen and why."""
+    log_path = Path(settings.artifacts_dir) / "foreman-decisions.jsonl"
+    if not log_path.is_file():
+        return []
+    entries = []
+    for line in log_path.read_text().strip().splitlines():
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries[-limit:]
+
+
+@app.get("/api/foreman/prompts")
+async def foreman_prompts(limit: int = 5) -> list[dict]:
+    """Return recent foreman prompt/response pairs for inspection."""
+    artifacts_dir = Path(settings.artifacts_dir)
+    prompt_files = sorted(artifacts_dir.glob("foreman-*-prompt.md"), reverse=True)[:limit]
+    results = []
+    for pf in prompt_files:
+        ts = pf.stem.split("-")[1]  # foreman-{ts}-prompt.md
+        response_path = artifacts_dir / f"foreman-{ts}-response.json"
+        stream_path = artifacts_dir / f"foreman-{ts}-stream.jsonl"
+        entry = {
+            "timestamp": int(ts),
+            "prompt_path": str(pf),
+            "prompt_size": pf.stat().st_size,
+        }
+        if response_path.is_file():
+            try:
+                entry["response"] = json.loads(response_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                entry["response"] = None
+        if stream_path.is_file():
+            entry["stream_lines"] = len(stream_path.read_text().strip().splitlines())
+        results.append(entry)
+    return results
+
+
 @app.get("/api/foreman/threads")
 async def list_foreman_threads() -> list[dict]:
     """Return all chat threads."""

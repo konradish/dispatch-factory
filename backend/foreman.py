@@ -359,6 +359,17 @@ Respond with a clear assessment and take any actions needed.
     # Log to factory log
     _write_foreman_log(_last_result)
 
+    # Decision log — what the foreman chose and why (B2's [contra] trail)
+    _write_decision_log({
+        "timestamp": time.time(),
+        "lens": lens["id"],
+        "is_chat": bool(human_message),
+        "assessment": result.get("assessment", ""),
+        "observations": result.get("observations", ""),
+        "actions_requested": result.get("actions", []),
+        "actions_results": actions_taken,
+    })
+
     return _last_result
 
 
@@ -400,13 +411,12 @@ async def main():
                 if isinstance(block, TextBlock):
                     result_parts.append(block.text)
                     if sf:
-                        sf.write(json.dumps({"type": "text", "content": block.text[:200]}) + chr(10))
+                        sf.write(json.dumps({"type": "text", "content": block.text}) + chr(10))
                         sf.flush()
                 elif hasattr(block, "name"):
                     if sf:
                         tool_input = getattr(block, "input", {})
-                        summary = str(tool_input)[:100] if tool_input else ""
-                        sf.write(json.dumps({"type": "tool_use", "tool": block.name, "summary": summary}) + chr(10))
+                        sf.write(json.dumps({"type": "tool_use", "tool": block.name, "input": tool_input}) + chr(10))
                         sf.flush()
         elif type(msg).__name__ == 'ToolResultMessage':
             if sf:
@@ -427,11 +437,14 @@ asyncio.run(main())
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as sf:
         sf.write(script_content)
         script_path = sf.name
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as pf:
-        pf.write(prompt)
-        prompt_path = pf.name
-    out_path = tempfile.mktemp(suffix=".json")
-    stream_path = tempfile.mktemp(suffix=".jsonl")
+
+    # Persist prompt and response in artifacts dir (not temp) for visibility
+    artifacts_dir = Path(settings.artifacts_dir)
+    ts = int(time.time())
+    prompt_path = str(artifacts_dir / f"foreman-{ts}-prompt.md")
+    out_path = str(artifacts_dir / f"foreman-{ts}-response.json")
+    stream_path = str(artifacts_dir / f"foreman-{ts}-stream.jsonl")
+    Path(prompt_path).write_text(prompt)
 
     # Store stream path so the API can read it
     global _active_stream_path
@@ -492,11 +505,11 @@ asyncio.run(main())
         return None
     finally:
         _active_stream_path = None
-        for p in [script_path, prompt_path, out_path, stream_path]:
-            try:
-                Path(p).unlink(missing_ok=True)
-            except OSError:
-                pass
+        # Only delete the temp script — prompt, response, stream are persistent artifacts
+        try:
+            Path(script_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _execute_action(action: dict) -> dict:
@@ -707,3 +720,18 @@ def _write_foreman_log(result: dict) -> None:
             f.write(json.dumps(result) + "\n")
     except OSError:
         logger.error("Failed to write foreman log")
+
+
+def _write_decision_log(entry: dict) -> None:
+    """Append to the foreman decision log — what was chosen and why.
+
+    This is the [contra] trail: reviewing past decisions reveals where
+    judgment was wrong. Separate from the foreman log (which tracks
+    outcomes) — this tracks reasoning.
+    """
+    log_path = Path(settings.artifacts_dir) / "foreman-decisions.jsonl"
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        logger.error("Failed to write decision log")
