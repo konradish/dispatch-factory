@@ -249,6 +249,10 @@ These tickets are parked — waiting for human input, a time window, or an exter
         for s in pipeline_summary["stages"]
     ], indent=2)
 
+    # Memory: recent decisions and noticings for cross-cycle continuity
+    recent_decisions = get_recent_decisions(limit=5)
+    recent_noticings = get_recent_noticings(limit=10)
+
     return f"""## Factory State Snapshot
 
 ### Active Workers ({len(active)})
@@ -283,6 +287,14 @@ In-flight: {len(dispatched)} tickets
 
 ### Direction Vector
 {direction}
+
+### Recent Decisions (your last {len(recent_decisions)} cycles)
+Review these to build on prior observations, not start fresh each time.
+{json.dumps(recent_decisions, indent=2) if recent_decisions else "No prior decisions recorded yet."}
+
+### Noticings (half-formed observations from prior cycles)
+Patterns you've noticed but haven't acted on. Follow up if they still apply.
+{json.dumps(recent_noticings, indent=2) if recent_noticings else "No noticings yet."}
 
 ### Pipeline Configuration{pipeline_overrides}
 {pipeline_stations_brief}
@@ -709,7 +721,59 @@ def _execute_action(action: dict) -> dict:
         result = _dispatch_async(cmd, ticket_id)
         return {"type": action_type, "ticket_id": ticket_id, **result}
 
+    elif action_type == "notice":
+        # B2's "beta deposit" — half-formed observations that don't require action.
+        # Stored in noticings log, surfaced to strategy/direction lenses on future cycles.
+        text = action.get("text", "")
+        if not text:
+            return {"type": action_type, "status": "error", "detail": "text required"}
+        _write_noticings_log(text)
+        return {"type": action_type, "status": "ok", "detail": f"Noticed: {text[:80]}"}
+
     return {"type": action_type, "status": "unknown_action"}
+
+
+def _write_noticings_log(text: str) -> None:
+    """Append to the foreman noticings log — half-formed observations.
+
+    B2's 'beta deposit': things the foreman notices but can't name yet.
+    Surfaced to strategy/direction lenses on future cycles.
+    """
+    log_path = Path(settings.artifacts_dir) / "foreman-noticings.jsonl"
+    entry = {"timestamp": time.time(), "text": text}
+    try:
+        with open(log_path, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        logger.error("Failed to write noticings log")
+
+
+def get_recent_noticings(limit: int = 10) -> list[dict]:
+    """Return recent noticings for inclusion in state snapshot."""
+    log_path = Path(settings.artifacts_dir) / "foreman-noticings.jsonl"
+    if not log_path.is_file():
+        return []
+    entries = []
+    for line in log_path.read_text().strip().splitlines():
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries[-limit:]
+
+
+def get_recent_decisions(limit: int = 5) -> list[dict]:
+    """Return recent decisions for inclusion in state snapshot."""
+    log_path = Path(settings.artifacts_dir) / "foreman-decisions.jsonl"
+    if not log_path.is_file():
+        return []
+    entries = []
+    for line in log_path.read_text().strip().splitlines():
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return entries[-limit:]
 
 
 def _write_foreman_log(result: dict) -> None:

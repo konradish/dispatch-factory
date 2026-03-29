@@ -1182,6 +1182,12 @@ async def foreman_prompts(limit: int = 5) -> list[dict]:
     return results
 
 
+@app.get("/api/foreman/noticings")
+async def foreman_noticings(limit: int = 20) -> list[dict]:
+    """Return recent foreman noticings — half-formed observations."""
+    return foreman.get_recent_noticings(limit=limit)
+
+
 @app.get("/api/foreman/threads")
 async def list_foreman_threads() -> list[dict]:
     """Return all chat threads."""
