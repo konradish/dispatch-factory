@@ -392,7 +392,8 @@ def _call_llm(prompt: str) -> dict | None:
     env.pop("CLAUDECODE", None)
 
     # Factory project dir — enables CLAUDE.md, auto-memory, project context
-    factory_dir = str(Path(__file__).parent.parent)
+    # Hardcoded because uvicorn --reload can make __file__ resolve strangely
+    factory_dir = "/mnt/c/projects/dispatch-factory"
 
     script_content = """
 import asyncio, sys, json, pathlib
