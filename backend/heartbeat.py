@@ -234,7 +234,6 @@ def _reconcile_backlog() -> list[str]:
                 backlog.mark_completed(ticket["id"], "completed")
                 actions.append(f"ticket {ticket['id']} completed ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=True))
-                actions.extend(healer_circuit_breaker.record_successful_deploy(project))
                 actions.extend(_maybe_create_auto_verify_ticket(ticket, session_id))
         elif state in ("error", "rolled_back"):
             healed = _session_was_healed(session)
@@ -781,7 +780,7 @@ def _auto_dispatch() -> list[str]:
     pending = backlog.list_tickets(status="pending") + backlog.list_tickets(status="ready")
 
     # Build set of in-flight task prefixes for dedup guard
-    inflight_tickets = backlog.list_tickets(status="dispatched")
+    inflight_tickets = backlog.list_tickets(status="dispatched") + backlog.list_tickets(status="dispatching")
     inflight_prefixes: dict[str, str] = {}  # task[:80] -> ticket_id
     for t in inflight_tickets:
         prefix = t.get("task", "")[:80]
