@@ -86,10 +86,12 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
         proc = subprocess.Popen(
             cmd, stdout=log_file, stderr=subprocess.STDOUT,
         )
-    except FileNotFoundError as e:
+    except Exception as e:
+        log_file.close()
         backlog.update_ticket(ticket_id, {"status": "pending"})
         lock.release()
         _cleanup_ticket_lock(ticket_id)
+        logger.error("dispatch Popen failed for %s: %s", ticket_id, e)
         return {"status": "error", "detail": str(e)}
 
     def _wait():
