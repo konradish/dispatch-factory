@@ -58,7 +58,8 @@ def scan_for_completions() -> list[dict]:
             data = json.loads(entry.read_text())
             data["_session_id"] = session_id
             completions.append(data)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning('Skipping corrupted completion artifact %s: %s', entry, e)
             continue
 
     return completions
@@ -132,7 +133,8 @@ def process_worker_completion(completion: dict) -> list[str]:
         subprocess.run(["tmux", "kill-session", "-t", session_id],
                        capture_output=True, timeout=10)
         actions.append(f"pipeline: killed tmux session {session_id}")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning('Failed to kill tmux session: %s', e)
         pass
 
     try:
