@@ -1,31 +1,39 @@
-# Dispatch Ops Report
+# Dispatch Ops Report: Auto-Verification Ticket Creation
 
-**Date:** 2026-03-28
-**Task:** Fix missing 'worker_done' state handler in `_reconcile_backlog()`
+**Date:** 2026-03-29
+**Task:** Add auto-verification ticket creation for deploy and fix tasks
 
-## Problem
+## Summary
 
-The `_reconcile_backlog()` function in `backend/heartbeat.py` handles dispatched ticket reconciliation by checking session states. The elif chain covered `deployed`, `completed`, `error`, `rolled_back`, and `abandoned` — but **not** `worker_done`.
-
-When `process_worker_completion()` hasn't yet written `result.md` by the time `_reconcile_backlog()` runs, the session state is still `worker_done` and falls through the entire elif chain silently, without updating the ticket or logging anything.
-
-## Fix
-
-Added an `elif state == "worker_done"` handler at line 222 that:
-- **Skips/defers** the ticket (does not modify ticket status)
-- **Logs a warning** for visibility: `ticket {id} session {session_id} in worker_done — deferring to next cycle`
-
-This is the safest approach: `scan_for_completions()` runs at the start of each heartbeat cycle and will call `process_worker_completion()`, which writes `result.md` and transitions the session to a terminal state. The next `_reconcile_backlog()` call will then match one of the existing handlers.
+Added automatic P1 verification ticket creation in `_reconcile_backlog()` for any completed session whose task text contains "deploy" or "fix" keywords. This ensures deploy/fix tasks get explicit follow-up verification, matching the existing pattern for healer-triggered verifications.
 
 ## Changes
 
-- `backend/heartbeat.py`: Added 4 lines (elif handler + comment + log warning) at line 222-225
+### `backend/heartbeat.py`
+
+1. **Added `import re`** at module top
+
+2. **Added `_DEPLOY_FIX_RE` pattern and `_maybe_create_auto_verify_ticket()` function** (after `_session_was_healed()`):
+   - Compiled regex `\b(deploy|fix)\b` (case-insensitive) for keyword matching
+   - Creates a ticket with `priority="urgent"`, `source="auto-verify"`, `task_type="verify"`
+   - Task text includes project, session ID, and truncated original task (200 chars)
+   - Returns action log entries for heartbeat reporting
+
+3. **Wired into completion branches** in `_reconcile_backlog()`:
+   - After successful "deployed" state (non-healed path)
+   - After successful "completed" state (non-healed path)
+   - NOT added to healed paths (those already have their own escalation logic)
+   - NOT added to error/abandoned paths (failed tasks don't need verification)
 
 ## Verification
 
-- `ruff check backend/heartbeat.py` — 2 pre-existing lint warnings (unused imports: `subprocess`, `reviewer_calibration`), no new issues introduced
-- Diff is minimal and isolated to the elif chain
+- `ruff check` on backend: **All checks passed**
+- `pytest` on related test files (healer_circuit_breaker, post_heal_verify): **13/13 passed**
+- Pre-existing frontend lint errors and unrelated test failures confirmed unchanged
 
-## Outcome
+## Design Decisions
 
-Success. The `worker_done` state is now handled explicitly with a safe defer-and-log pattern.
+- Used `urgent` priority (P1) as specified in the task
+- Only triggers on successful completions — failed/abandoned tasks don't get verification tickets
+- Skips healed sessions since they already have `_escalate_healed_unverified()` / `_verify_healed_deploy()`
+- Word-boundary regex prevents false matches (e.g., "prefix" won't match "fix")

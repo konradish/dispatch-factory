@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 
 import artifacts
@@ -200,6 +201,7 @@ def _reconcile_backlog() -> list[str]:
                 actions.append(f"ticket {ticket['id']} completed ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=True))
                 actions.extend(healer_circuit_breaker.record_successful_deploy(project))
+                actions.extend(_maybe_create_auto_verify_ticket(ticket, session_id))
         elif state == "completed":
             # "completed" means result.md exists but verifier didn't report DEPLOYED.
             # If the session was healed, this is suspicious — the healer may have
@@ -220,6 +222,7 @@ def _reconcile_backlog() -> list[str]:
                 actions.append(f"ticket {ticket['id']} completed ({session_id})")
                 actions.extend(circuit_breaker.record_result(project, success=True))
                 actions.extend(healer_circuit_breaker.record_successful_deploy(project))
+                actions.extend(_maybe_create_auto_verify_ticket(ticket, session_id))
         elif state in ("error", "rolled_back"):
             healed = _session_was_healed(session)
             if healed:
@@ -245,6 +248,36 @@ def _session_was_healed(session: dict) -> bool:
     """Check if a session had healer intervention."""
     healer = session.get("artifacts", {}).get("healer")
     return isinstance(healer, dict)
+
+
+_DEPLOY_FIX_RE = re.compile(r"\b(deploy|fix)\b", re.IGNORECASE)
+
+
+def _maybe_create_auto_verify_ticket(ticket: dict, session_id: str) -> list[str]:
+    """Auto-create a P1 verification ticket for deploy/fix tasks.
+
+    When a worker_done session's task contains 'deploy' or 'fix', we create
+    a follow-up verification ticket so the result is explicitly confirmed.
+    """
+    task_text = ticket.get("task", "")
+    if not _DEPLOY_FIX_RE.search(task_text):
+        return []
+
+    project = ticket.get("project", "unknown")
+    verify_task = (
+        f"Verify {project} after completed task (session {session_id}): {task_text[:200]}"
+    )
+    verify_ticket = backlog.create_ticket(
+        task=verify_task,
+        project=project,
+        priority="urgent",
+        source="auto-verify",
+        task_type="verify",
+    )
+    return [
+        f"auto-verify: created P1 verification ticket {verify_ticket['id']} "
+        f"for deploy/fix task ({session_id})"
+    ]
 
 
 def _healer_left_rebase_paused(project: str) -> str | None:
