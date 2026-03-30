@@ -654,7 +654,7 @@ def _run_dispatch_guards(ticket: dict) -> None:
 
 def _build_dispatch_cmd(ticket: dict) -> list[str]:
     """Build the dispatch CLI command from a ticket."""
-    valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
+    valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy", "--no-heal"}
     cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
     task_type = ticket.get("task_type", "code")
     if task_type != "code":
