@@ -591,13 +591,8 @@ function KanbanCard({
 
   return (
     <div
-      draggable
-      onDragStart={(e) => onDragStart(e, ticket.id)}
-      onDragEnd={onDragEnd}
       onClick={() => onOpenDetail(ticket)}
-      className={`rounded-md border border-l-2 ${bgClass} ${cardBorder} px-3 py-2 cursor-pointer transition-opacity ${
-        isDragging ? "opacity-40" : "opacity-100"
-      } hover:bg-bg-surface-alt/50`}
+      className={`rounded-md border border-l-2 ${bgClass} ${cardBorder} px-3 py-2 cursor-pointer hover:bg-bg-surface-alt/50`}
     >
       {/* Task text (2 lines max) */}
       <p className="text-xs text-gray-300 leading-snug line-clamp-2 mb-1.5">
