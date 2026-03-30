@@ -83,9 +83,13 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
         log_file = open(log_path, "w")
-        proc = subprocess.Popen(
-            cmd, stdout=log_file, stderr=subprocess.STDOUT,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd, stdout=log_file, stderr=subprocess.STDOUT,
+            )
+        except FileNotFoundError:
+            log_file.close()
+            raise
     except FileNotFoundError as e:
         backlog.update_ticket(ticket_id, {"status": "pending"})
         lock.release()
