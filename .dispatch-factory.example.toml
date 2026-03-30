@@ -45,3 +45,9 @@ auto_dispatch = false
 
 # Maximum concurrent workers for auto-dispatch
 max_concurrent = 3
+
+# Maximum verification depth — how many verify/escalation tickets can chain
+# for the same project before the heartbeat stops spawning new workers and
+# writes a summary result instead.  Prevents runaway verification chains
+# (e.g. 4-deep chain consuming 5 workers for one question).
+max_verification_depth = 2

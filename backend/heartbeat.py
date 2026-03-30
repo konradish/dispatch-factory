@@ -265,6 +265,57 @@ def _healer_left_rebase_paused(project: str) -> str | None:
     return post_heal_verify._detect_rebase_in_progress(project)
 
 
+def _verification_depth_exceeded(project: str) -> bool:
+    """Check if verification ticket chain for a project has hit max depth.
+
+    Counts recent tickets with verify/escalation sources for the same project.
+    When depth >= max_verification_depth, returns True to prevent runaway
+    verification chains (e.g. the 4-deep chain that consumed 5 workers to
+    answer 1 question about electricapp's deploy status).
+    """
+    max_depth = settings.heartbeat.max_verification_depth
+    verify_sources = {"healer-verification", "healer", "healer-circuit-breaker"}
+
+    # Count all verify-chain tickets for this project that are pending, dispatching,
+    # dispatched, or recently completed/failed (within 1 hour).
+    all_tickets = backlog.list_tickets()
+    now = time.time()
+    one_hour_ago = now - 3600
+
+    depth = 0
+    for t in all_tickets:
+        if t.get("project") != project:
+            continue
+        if t.get("source") not in verify_sources:
+            continue
+        status = t.get("status", "")
+        if status in ("pending", "dispatching", "dispatched"):
+            depth += 1
+        elif status in ("completed", "failed"):
+            completed_at = t.get("completed_at") or 0
+            if completed_at > one_hour_ago:
+                depth += 1
+
+    if depth >= max_depth:
+        logger.warning(
+            "Verification depth %d >= max %d for %s — skipping new verify ticket",
+            depth, max_depth, project,
+        )
+        return True
+    return False
+
+
+def _write_depth_exceeded_result(session_id: str, project: str, reason: str) -> None:
+    """Write a result.md summarizing why verification was capped instead of spawning another worker."""
+    import pipeline_runner
+    pipeline_runner._write_result(
+        session_id,
+        f"VERIFICATION_DEPTH_EXCEEDED — {reason}",
+        "",
+        f"Verification chain for {project} hit max depth; no further workers spawned",
+    )
+
+
 def _escalate_healed_unverified(session: dict, project: str, session_id: str) -> list[str]:
     """Escalate a healed session that completed without verified deploy.
 
@@ -274,6 +325,19 @@ def _escalate_healed_unverified(session: dict, project: str, session_id: str) ->
     ticket and prevents the false-success pattern seen in electricapp-2221
     and dispatch-factory-2203.
     """
+    # --- Verification depth guard ---
+    if _verification_depth_exceeded(project):
+        _write_depth_exceeded_result(session_id, project, "healed-but-unverified")
+        cleared_healed_sessions.clear_session(
+            session_id,
+            reason="auto-cleared after verification depth exceeded",
+            source="heartbeat",
+        )
+        return [
+            f"verification-depth-exceeded: {project} ({session_id}) — "
+            f"skipped creating verify ticket (depth >= {settings.heartbeat.max_verification_depth})"
+        ]
+
     healer = session.get("artifacts", {}).get("healer", {})
     action = healer.get("action", "unknown")
     diagnosis = healer.get("diagnosis", "")[:200]
@@ -402,6 +466,14 @@ def _check_healed_but_failed(session: dict, project: str, session_id: str) -> li
     healer = session.get("artifacts", {}).get("healer")
     if not isinstance(healer, dict):
         return []
+
+    # --- Verification depth guard ---
+    if _verification_depth_exceeded(project):
+        _write_depth_exceeded_result(session_id, project, "healed-but-failed")
+        return [
+            f"verification-depth-exceeded: {project} ({session_id}) — "
+            f"skipped creating root-cause ticket (depth >= {settings.heartbeat.max_verification_depth})"
+        ]
 
     action = healer.get("action", "unknown")
     diagnosis = healer.get("diagnosis", "")[:200]
