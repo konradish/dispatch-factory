@@ -45,7 +45,7 @@ logger = logging.getLogger("dispatch-factory")
 SESSION_ID_RE = re.compile(r"^(?:worker|deploy|validate)-[a-z][a-z0-9-]*-\d+$")
 SESSION_ID_EXTERNAL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9._-]{2,80}$")
 PROJECT_NAME_RE = re.compile(r"^[a-z][a-z0-9-]*$")
-ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--no-heal"])
+ALLOWED_FLAGS = frozenset(["--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--no-heal", "--force-deploy"])
 
 # Task quality gate — reject vague or underspecified tasks.
 # Vague tasks correlate with deploy failures (sessions 1822, 1824, 1609).

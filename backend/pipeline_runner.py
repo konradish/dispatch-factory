@@ -60,6 +60,10 @@ def scan_for_completions() -> list[dict]:
             completions.append(data)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning('failed to parse %s: %s', entry.name, e)
+            try:
+                result_path.write_text(f'# Error\n\nFailed to parse worker-done artifact: {e}\n')
+            except OSError:
+                pass
             continue
 
     return completions

@@ -675,7 +675,7 @@ def _auto_dispatch() -> list[str]:
             actions.append(f"healer-circuit-breaker: {ticket['id']} dispatched with --no-heal ({ticket['project']})")
 
         # Dispatch via CLI — filter to known CLI flags only
-        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy", "--no-heal"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         # Pass task type if set
         task_type = ticket.get("task_type", "code")
