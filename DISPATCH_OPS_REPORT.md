@@ -1,42 +1,58 @@
-# Ops Report: Auto-Verification Ticket Creation + Depth Guard Integration
+# Dispatch Ops Report: Factory Process Restart + Validation
 
-**Date:** 2026-03-30
-**Task:** Rebase auto-verification feature onto main, integrating with max_verification_depth guard
+**Date:** 2026-03-30 01:40 UTC
+**Operator:** dispatch ops worker (unattended)
 
-## Summary
+## 1. Factory Restart
 
-Rebased the auto-verification ticket creation feature (from dispatch/0329-2308) onto main after the max_verification_depth guard was merged (PR #86). The auto-verify function now respects verification depth limits, and `auto-verify` is included as a tracked source in `_verification_depth_exceeded()`.
+- Killed stale `factory` tmux session (created 2026-03-29 21:29)
+- Started new session: `tmux new-session -d -s factory -c /mnt/c/projects/dispatch-factory 'make dev'`
+- Health check after 10s startup: `{"status":"ok"}`
 
-## Changes
+## 2. PR #90 Code Verification
 
-### `backend/heartbeat.py`
+```
+07269e6 [dispatch] Fix 3 bugs in dispatch-factory backend that cause silent tic (#90)
+41b398a fix: add worker_done timeout escalation to prevent sessions stuck indefinitely (#89)
+6e8d002 fix: 4 critical bugs breaking completion pipeline (#88)
+```
 
-1. **Added `import re`** at module top
+Confirmed: commit `07269e6` (PR #90 bug fixes) is on HEAD.
 
-2. **Added `_DEPLOY_FIX_RE` pattern and `_maybe_create_auto_verify_ticket()` function** (after `_session_was_healed()`):
-   - Compiled regex `\b(deploy|fix)\b` (case-insensitive) for keyword matching
-   - Creates a ticket with `priority="urgent"`, `source="auto-verify"`, `task_type="verify"`
-   - Task text includes project, session ID, and truncated original task (200 chars)
-   - Checks `_verification_depth_exceeded()` before creating to prevent runaway chains
-   - Returns action log entries for heartbeat reporting
+## 3. Backend Tests
 
-3. **Wired into completion branches** in `_reconcile_backlog()`:
-   - After successful "deployed" state (non-healed path)
-   - After successful "completed" state (non-healed path)
-   - NOT added to healed paths (those already have their own escalation logic)
-   - NOT added to error/abandoned paths (failed tasks don't need verification)
+Initial run: **1 failure** in `test_factory_idle_mode.py`
 
-4. **Added `"auto-verify"` to `verify_sources`** in `_verification_depth_exceeded()` so auto-verify tickets count toward the chain depth limit.
+### Bug Found: `backlog.settings` mock targets non-existent attribute
 
-## Verification
+The `backlog` module was migrated to SQLite (via `db.py`) but tests still mocked `backlog.settings` — an attribute that no longer exists. Fixed by mocking `backlog.list_tickets` instead, which is the actual function called by `factory_idle_mode.is_idle()`.
 
-- `ruff check` on backend: passed
-- `tsc -b --noEmit` on frontend: passed
+### Bug Found: `_get_active_projects` regex matches section headers
 
-## Design Decisions
+The regex `\*{0,2}([a-z][a-z0-9-]+)\*{0,2}` in `factory_idle_mode._get_active_projects()` matched "ctive" from the header `## Active Projects`. Fixed by restricting matches to list item lines (starting with `-`).
 
-- Used `urgent` priority (P1) as specified in the task
-- Only triggers on successful completions — failed/abandoned tasks don't get verification tickets
-- Skips healed sessions since they already have `_escalate_healed_unverified()` / `_verify_healed_deploy()`
-- Word-boundary regex prevents false matches (e.g., "prefix" won't match "fix")
-- Integrated with `_verification_depth_exceeded()` to prevent auto-verify from creating unbounded chains
+### Final result: **31 passed, 0 failed**
+
+## 4. Backlog Status Post-Restart
+
+| Status | Count |
+|--------|-------|
+| pending | 11 |
+| dispatched | 1 |
+| completed | 178 |
+| cancelled | 156 |
+| failed | 13 |
+| needs_input | 3 |
+| blocked | 2 |
+| **Total** | **364** |
+
+Factory is healthy and dispatching. 11 pending tickets available for processing.
+
+## Code Changes
+
+1. **`backend/factory_idle_mode.py`** — Added list-item filter to `_get_active_projects` regex to prevent matching section headers
+2. **`backend/tests/test_factory_idle_mode.py`** — Replaced `mock.patch("backlog.settings")` with `mock.patch("backlog.list_tickets", return_value=[...])` across all test functions (6 occurrences)
+
+## Outcome
+
+Factory restarted successfully with PR #90 code. Two latent bugs found and fixed during test validation. All 31 tests pass. Pipeline operational with 11 pending tickets.

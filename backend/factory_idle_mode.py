@@ -71,6 +71,11 @@ def _get_active_projects() -> set[str]:
     import re
     projects: set[str] = set()
     for line in direction.splitlines():
+        # Only match list items (lines starting with -) to avoid
+        # picking up words from section headers like "## Active Projects"
+        stripped = line.strip()
+        if not stripped.startswith("-"):
+            continue
         match = re.search(r"\*{0,2}([a-z][a-z0-9-]+)\*{0,2}", line)
         if match:
             projects.add(match.group(1))
