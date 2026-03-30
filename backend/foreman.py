@@ -636,7 +636,7 @@ def _execute_action(action: dict) -> dict:
             if "--no-heal" not in flags:
                 ticket.setdefault("flags", []).append("--no-heal")
         # Actually dispatch — filter to known CLI flags only
-        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy"}
+        valid_flags = {"--no-merge", "--plan", "--no-plan", "--deploy-only", "--validate-only", "--force-deploy", "--no-heal"}
         cmd = [settings.dispatch_bin, ticket["task"], "--project", ticket["project"]]
         task_type = ticket.get("task_type", "code")
         if task_type != "code":
