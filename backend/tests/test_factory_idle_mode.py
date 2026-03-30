@@ -59,13 +59,12 @@ def test_idle_when_all_projects_need_human_input(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         assert factory_idle_mode.is_idle() is True
 
@@ -78,13 +77,12 @@ def test_not_idle_when_one_project_has_work(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         assert factory_idle_mode.is_idle() is False
 
@@ -100,13 +98,15 @@ def test_not_idle_when_backlog_has_tickets(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[
+            {"id": "t-001", "task": "some work", "project": "recipebrain",
+             "status": "pending", "priority": "normal", "created_at": "2026-01-01"},
+        ]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         assert factory_idle_mode.is_idle() is False
 
@@ -116,13 +116,12 @@ def test_not_idle_when_no_direction_file(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         assert factory_idle_mode.is_idle() is False
 
@@ -135,7 +134,7 @@ def test_not_idle_when_all_projects_paused(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={
             "recipebrain": {"reason": "paused"},
             "dispatch-factory": {"reason": "paused"},
@@ -144,7 +143,6 @@ def test_not_idle_when_all_projects_paused(tmp_path: Path) -> None:
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         assert factory_idle_mode.is_idle() is False
 
@@ -157,13 +155,12 @@ def test_flag_cooldown(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         # First call should emit flag
         result1 = factory_idle_mode.check_and_flag()
@@ -192,13 +189,12 @@ def test_get_state(tmp_path: Path) -> None:
     with (
         mock.patch("factory_idle_mode.settings") as mock_settings,
         mock.patch("empty_backlog_detector.settings") as mock_ebd_settings,
-        mock.patch("backlog.settings") as mock_bl_settings,
+        mock.patch("backlog.list_tickets", return_value=[]),
         mock.patch("paused_projects.get_paused", return_value={}),
         mock.patch("archived_projects.get_archived", return_value={}),
     ):
         mock_settings.artifacts_dir = str(tmp_path)
         mock_ebd_settings.artifacts_dir = str(tmp_path)
-        mock_bl_settings.artifacts_dir = str(tmp_path)
 
         state = factory_idle_mode.get_state()
         assert state["idle"] is True
