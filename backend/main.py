@@ -774,11 +774,21 @@ async def heartbeat_status() -> dict:
 
 
 @app.post("/api/heartbeat/auto-dispatch")
-async def toggle_auto_dispatch(enabled: bool = True, max_concurrent: int = 3) -> dict:
+async def toggle_auto_dispatch(
+    enabled: bool = True,
+    max_concurrent: int = 3,
+    foreman_every: int | None = None,
+) -> dict:
     _require_controls()
     heartbeat._state["auto_dispatch_enabled"] = enabled
     heartbeat._state["max_concurrent"] = max_concurrent
-    return {"auto_dispatch": enabled, "max_concurrent": max_concurrent}
+    if foreman_every is not None:
+        heartbeat._state["foreman_every_n_beats"] = foreman_every
+    return {
+        "auto_dispatch": enabled,
+        "max_concurrent": max_concurrent,
+        "foreman_every_n_beats": heartbeat._state["foreman_every_n_beats"],
+    }
 
 
 @app.post("/api/sessions/gc")

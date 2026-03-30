@@ -38,6 +38,7 @@ _state: dict = {
     "max_concurrent": settings.heartbeat.max_concurrent,
     "enabled": settings.heartbeat.enabled,
     "interval_minutes": settings.heartbeat.interval_minutes,
+    "foreman_every_n_beats": 5,  # Default: every 5th beat (~2.5 min). Set higher to save quota.
 }
 
 
@@ -147,9 +148,10 @@ def _beat() -> list[str]:
     if _state.get("auto_dispatch_enabled", False):
         actions.extend(_auto_dispatch())
 
-    # 9. Run foreman in background thread — every 5th beat (~2.5 min)
+    # 9. Run foreman in background thread — every Nth beat (configurable)
     #    Foreman can take minutes with 100 turns. Must not block the event loop.
-    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % 5 == 0:
+    foreman_every = _state.get("foreman_every_n_beats", 5)
+    if _state.get("auto_dispatch_enabled", False) and _state["beats"] % foreman_every == 0:
         import threading
         def _run_foreman_bg():
             try:
