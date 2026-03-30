@@ -20,7 +20,9 @@ You can fix the factory itself. If strategic review reveals the factory needs a 
 - unpause_project: Resume a paused project (provide project name)
 - pause_project: Pause a project (provide project name + reason)
 - update_direction: Update the direction vector (provide direction text)
-- flag_human: Raise a strategic question
+- ask_human: Ask a strategic question that needs human judgment (provide question, optional context and project)
+- flag_human: Raise an urgent issue
+- notice: Record a strategic observation (provide text)
 - do_nothing: Strategy looks sound
 
 ## Output format

@@ -30,7 +30,8 @@ Check the last few entries in your decision log (observations field). If you not
 - create_ticket: Create tickets for gaps you identify (provide task, project, priority, task_type)
 - update_direction: Evolve the direction vector based on what you observe
 - reprioritize: Adjust priorities based on gap analysis
-- flag_human: Raise strategic questions that need human judgment
+- ask_human: Ask the human a specific question (provide question, optional context and project). Use this when you need human judgment to decide direction — e.g., "What's the priority for recipebrain: mobile UX or API coverage?" Do NOT re-ask questions that are already in "Unanswered Questions" — wait for the response.
+- flag_human: Raise urgent issues that need immediate attention (not questions — use ask_human for those)
 - add_ticket_note: Add context to existing tickets
 - notice: Record a half-formed observation (provide text) — not a ticket, just a pattern you're tracking
 - do_nothing: ONLY if you genuinely believe the backlog is well-shaped and the direction is on track

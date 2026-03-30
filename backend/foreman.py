@@ -252,12 +252,22 @@ These tickets are parked — waiting for human input, a time window, or an exter
     # Memory: recent decisions and noticings for cross-cycle continuity
     recent_decisions = get_recent_decisions(limit=5)
     recent_noticings = get_recent_noticings(limit=10)
+    unanswered = get_unanswered_questions()
+
+    unanswered_section = ""
+    if unanswered:
+        unanswered_section = f"""
+### Unanswered Questions ({len(unanswered)})
+You asked these and haven't gotten a response yet. Do NOT re-ask — wait for the human.
+If a question has been pending >24h, escalate via flag_human.
+{json.dumps(unanswered, indent=2)}
+"""
 
     return f"""## Factory State Snapshot
 
 ### Active Workers ({len(active)})
 {active_str}
-
+{unanswered_section}
 ### Zombie TMux Sessions ({len(zombies)})
 Sessions where the worker exited but tmux session remains. Use kill_session to clean up.
 {zombie_str}
@@ -731,7 +741,151 @@ def _execute_action(action: dict) -> dict:
         _write_noticings_log(text)
         return {"type": action_type, "status": "ok", "detail": f"Noticed: {text[:80]}"}
 
+    elif action_type == "ask_human":
+        # Async question loop: post question, don't block, pick up answer next cycle.
+        # Creates needs_input ticket + posts to #factory chat.
+        question = action.get("question", action.get("text", ""))
+        context = action.get("context", "")
+        project = action.get("project", "")
+        if not question:
+            return {"type": action_type, "status": "error", "detail": "question required"}
+
+        # Create needs_input ticket
+        ticket = backlog.create_ticket(
+            task=f"[QUESTION] {question}",
+            project=project or "dispatch-factory",
+            priority="high",
+            source="foreman",
+            status="needs_input",
+            task_type="question",
+        )
+        if context:
+            backlog.add_note(ticket["id"], f"Context: {context}", author="foreman")
+
+        # Post to #factory chat so human sees it across channels
+        _post_to_chat(question, context, ticket["id"])
+
+        return {
+            "type": action_type, "status": "ok",
+            "ticket_id": ticket["id"],
+            "detail": f"Question posted: {question[:80]}",
+        }
+
     return {"type": action_type, "status": "unknown_action"}
+
+
+def _post_to_chat(question: str, context: str, ticket_id: str) -> None:
+    """Post a foreman question to the #factory chat channel."""
+    body = f"**Question from Foreman** (ticket {ticket_id[:8]})\n\n{question}"
+    if context:
+        body += f"\n\n_Context: {context}_"
+    body += "\n\nReply here or add a note to the ticket in the factory UI."
+
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "name": "chat__send",
+            "arguments": {
+                "from": "foreman",
+                "channel": "factory",
+                "body": body,
+            },
+        })
+        req = urllib.request.Request(
+            "http://chat.localhost/call",
+            data=payload.encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        logger.warning("Failed to post question to chat: %s", e)
+
+
+def _read_chat_replies(since_timestamp: float) -> list[dict]:
+    """Read replies from #factory chat since a given timestamp."""
+    try:
+        import urllib.request
+        payload = json.dumps({
+            "name": "chat__history",
+            "arguments": {
+                "channel": "factory",
+                "as": "foreman",
+                "limit": 20,
+            },
+        })
+        req = urllib.request.Request(
+            "http://chat.localhost/call",
+            data=payload.encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        # Parse the nested response
+        content = data.get("content", [{}])
+        messages_json = content[0].get("text", "{}") if content else "{}"
+        messages_data = json.loads(messages_json)
+        messages = messages_data.get("messages", [])
+
+        # Filter to non-foreman replies after the timestamp
+        from datetime import datetime
+        replies = []
+        for msg in messages:
+            if msg.get("from") == "foreman":
+                continue
+            # Parse ISO timestamp
+            created = msg.get("created_at", "")
+            try:
+                dt = datetime.fromisoformat(created)
+                msg_ts = dt.timestamp()
+            except (ValueError, TypeError):
+                continue
+            if msg_ts > since_timestamp:
+                replies.append({"from": msg["from"], "body": msg["body"], "timestamp": msg_ts})
+        return replies
+    except Exception as e:
+        logger.warning("Failed to read chat replies: %s", e)
+        return []
+
+
+def get_unanswered_questions() -> list[dict]:
+    """Return needs_input question tickets that haven't been answered yet.
+
+    A question is 'answered' if it has a note from someone other than 'foreman',
+    or if there's a reply in #factory chat after the ticket was created.
+    """
+    questions = []
+    for ticket in backlog.list_tickets(status="needs_input"):
+        if ticket.get("task_type") != "question":
+            continue
+
+        # Check for answer via ticket notes
+        notes = ticket.get("notes", [])
+        human_notes = [n for n in notes if n.get("author") != "foreman"]
+        if human_notes:
+            continue  # Answered via ticket note
+
+        # Check for answer via #factory chat
+        created_at = ticket.get("created_at", 0)
+        chat_replies = _read_chat_replies(created_at)
+        if chat_replies:
+            # Attach the reply to the ticket as a note so it persists
+            for reply in chat_replies:
+                backlog.add_note(
+                    ticket["id"],
+                    f"[via chat, {reply['from']}] {reply['body']}",
+                    author=reply["from"],
+                )
+            continue  # Now answered
+
+        questions.append({
+            "ticket_id": ticket["id"],
+            "question": ticket["task"].replace("[QUESTION] ", ""),
+            "project": ticket["project"],
+            "asked_at": created_at,
+            "age_minutes": (time.time() - created_at) / 60,
+        })
+
+    return questions
 
 
 def _write_noticings_log(text: str) -> None:

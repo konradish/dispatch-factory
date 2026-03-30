@@ -28,7 +28,9 @@ You can fix the factory itself. If you diagnose a pipeline bug, use spawn_worker
 - update_pipeline_station: Modify a pipeline stage config (provide station_id + updates)
 - update_pipeline_global: Modify global pipeline config (provide updates dict)
 - update_direction: Update the direction vector (provide direction text)
-- flag_human: Flag something for human review (provide reason)
+- ask_human: Ask the human a specific question when you need their judgment (provide question, optional context and project). Questions are posted to #factory chat and tracked as tickets. Do NOT re-ask if the question is already in "Unanswered Questions".
+- flag_human: Flag something urgent for human review (provide reason)
+- notice: Record a half-formed observation (provide text) — not a ticket, just a pattern
 - do_nothing: Everything looks fine
 
 ## Output format
