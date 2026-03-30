@@ -598,6 +598,11 @@ def _gc_zombie_sessions() -> list[str]:
         if age_minutes < ZOMBIE_THRESHOLD_MINUTES:
             continue
 
+        # Skip if worker_done artifact exists (worker finished, pipeline will pick it up)
+        worker_done_file = artifacts._artifacts_path() / f"{sid}-worker-done.json"
+        if worker_done_file.is_file():
+            continue
+
         # Mark as abandoned
         if artifacts.abandon_session(sid, reason=f"no active worker, idle {int(age_minutes)}min"):
             actions.append(f"gc: abandoned {sid} (idle {int(age_minutes)}min)")
