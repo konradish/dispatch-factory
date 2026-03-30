@@ -444,6 +444,11 @@ def _check_stuck_workers() -> list[str]:
 # Minimum age (minutes) before a session with no active worker is considered a zombie.
 ZOMBIE_THRESHOLD_MINUTES = 30
 
+# Maximum time (minutes) a session may stay in 'planning' state before auto-abandon.
+# Uses log file creation time (st_ctime), so fast-looping planners that keep
+# touching mtime cannot evade this check.
+MAX_PLANNING_MINUTES = 15
+
 
 def _gc_zombie_sessions() -> list[str]:
     """Detect and mark zombie sessions — running state with no active tmux worker.
@@ -479,6 +484,26 @@ def _gc_zombie_sessions() -> list[str]:
         if artifacts.abandon_session(sid, reason=f"no active worker, idle {int(age_minutes)}min"):
             actions.append(f"gc: abandoned {sid} (idle {int(age_minutes)}min)")
             logger.info("GC abandoned zombie session %s (idle %dmin)", sid, int(age_minutes))
+
+    # Planning-timeout check: abandon sessions stuck in 'planning' too long.
+    # Uses log file creation time (st_ctime) so fast-looping planners that
+    # continuously update mtime cannot evade the idle-based zombie check above.
+    for session in all_sessions:
+        sid = session["id"]
+        if session["state"] != "planning":
+            continue
+        log_path = artifacts._artifacts_path() / f"{sid}.log"
+        if not log_path.is_file():
+            continue
+        try:
+            planning_age_minutes = (time.time() - log_path.stat().st_ctime) / 60
+        except OSError:
+            continue
+        if planning_age_minutes < MAX_PLANNING_MINUTES:
+            continue
+        if artifacts.abandon_session(sid, reason=f"planning timeout: exceeded max planning cycles ({int(planning_age_minutes)}min)"):
+            actions.append(f"gc: abandoned {sid} (planning timeout {int(planning_age_minutes)}min)")
+            logger.info("GC abandoned planning session %s (created %dmin ago)", sid, int(planning_age_minutes))
 
     # Kill tmux sessions for completed workers that pipeline_runner already processed
     # (has result.md). These are dead shells sitting around. Check worker_done + any
