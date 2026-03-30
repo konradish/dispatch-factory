@@ -177,7 +177,10 @@ def _reconcile_backlog() -> list[str]:
     # Stale dispatching tickets: if dispatching for >10 min with no session_id,
     # the _dispatch_async background thread died. Reset to pending.
     for ticket in backlog.list_tickets(status="dispatching"):
-        dispatched_age = time.time() - (ticket.get("dispatched_at") or ticket.get("created_at", 0))
+        dispatched_at = ticket.get("dispatched_at")
+        if not dispatched_at:
+            continue  # Can't compute age without dispatched_at
+        dispatched_age = time.time() - dispatched_at
         if dispatched_age > 600 and not ticket.get("session_id"):
             backlog.update_ticket(ticket["id"], {"status": "pending"})
             actions.append(f"reset stale dispatching ticket {ticket['id']} → pending ({dispatched_age/60:.0f}m old)")
