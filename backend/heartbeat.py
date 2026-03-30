@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 import time
 
 import artifacts
@@ -25,7 +24,6 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
-import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
