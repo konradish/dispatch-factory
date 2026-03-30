@@ -35,6 +35,10 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     that waits for exit, parses session ID, and calls mark_dispatched.
     The heartbeat picks up completion artifacts independently.
     """
+    # Duplicate-dispatch guard: skip if ticket already has a session
+    tickets = [t for t in backlog.list_tickets() if t["id"] == ticket_id]
+    if tickets and tickets[0].get("session_id"):
+        return {"status": "skipped", "detail": f"ticket already dispatched as {tickets[0]['session_id']}"}
     backlog.update_ticket(ticket_id, {"status": "dispatching"})
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
