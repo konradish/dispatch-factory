@@ -50,8 +50,8 @@ interface ColumnDef {
 const COLUMNS: ColumnDef[] = [
   { id: "intake", title: "Intake", statuses: ["intake", "needs_input"], borderColor: "border-accent-yellow" },
   { id: "ready", title: "Ready", statuses: ["ready", "pending"], borderColor: "border-accent-blue" },
-  { id: "inflight", title: "In Flight", statuses: ["dispatched"], borderColor: "border-accent-cyan", pulse: true },
-  { id: "done", title: "Done", statuses: ["completed", "failed", "cancelled"], borderColor: "border-accent-green", collapsible: true },
+  { id: "inflight", title: "In Flight", statuses: ["dispatching", "dispatched"], borderColor: "border-accent-cyan", pulse: true },
+  { id: "done", title: "Done", statuses: ["completed", "failed", "cancelled", "blocked"], borderColor: "border-accent-green", collapsible: true },
 ];
 
 // Map column id -> target status when dropping into that column
