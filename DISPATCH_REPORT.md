@@ -1,70 +1,133 @@
-# Fix: Duplicate-Dispatch Race Condition in `_dispatch_async()`
+# Process 5 worker_done Sessions — Verdict Extraction Report
+
+**Date:** 2026-03-29 21:43 UTC
+**Sessions processed:** 5/5 (all SUCCESS)
 
 ## Summary
 
-A TOCTOU race in `backend/foreman.py:_dispatch_async()` allowed concurrent heartbeat cycles to dispatch the same ticket twice (evidence: workers 1952 and 1953 both running ticket `1f99ec97`). The fix adds per-ticket locks with compare-and-swap on ticket status before spawning the subprocess, plus lock lifecycle management to prevent unbounded memory growth. All 5 race condition tests pass.
+All 5 worker_done sessions completed successfully (exit_code=0). Three produced PRs (electricapp PR#86, movies PR#92, dispatch-factory no-op). Two were pure research (lawpass, recipebrain). Five follow-up implementation tickets have been created in the backlog via the API.
 
-## Findings
+## Session Verdicts
 
-### Root Cause
+### 1. worker-electricapp-2129 (Scoping)
 
-The original guard only checked `session_id`:
+| Field | Value |
+|-------|-------|
+| **Project** | electricapp |
+| **Task** | Scope electricapp resumption (2nd attempt) |
+| **Verdict** | SUCCESS |
+| **PR** | https://github.com/konradish/electric-app/pull/86 |
+| **Duration** | ~2m 35s |
 
-```python
-tickets = [t for t in backlog.list_tickets() if t["id"] == ticket_id]
-if tickets and tickets[0].get("session_id"):
-    return {"status": "skipped", ...}
-```
+**Output:** Identified 5 prioritized work items after 21-day pause:
+1. **P0** — Deploy 2 undeployed commits (`ae2ee1e`, `7c16f6b`) sitting on main for 21 days
+2. **P1** — Split `worker/src/index.ts` (2,912-line monolith) into route/service modules
+3. **P2** — Set up `electricityfinder.online` custom domain (wrangler config exists, DNS missing)
+4. **P3** — Clean up 30+ stale dispatch branches and 16 stash entries from healer cascade
+5. **P4** — Evaluate next features: usage analytics, plan alerts, remove deprecated FastAPI backend
 
-**Problem:** Between setting `status = "dispatching"` and the background thread writing `session_id` (after subprocess completes), a concurrent heartbeat could see `session_id = None` and dispatch again. The race window spans the entire subprocess lifetime (seconds to minutes).
+**Key finding:** The 03/21-03/26 dispatch agent cascade ("healer feedback loop") produced 30+ PRs and 16 stash entries but merged zero value — confirms dispatch should be research-only on this repo.
 
-### Fix Applied (3 layers of defense)
+**Follow-up ticket:** `548f981c` — Deploy commits + split monolith (HIGH)
 
-1. **Per-ticket lock** (`_dispatch_locks` dict + `_dispatch_locks_guard`): Non-blocking `lock.acquire(blocking=False)` ensures only one thread enters dispatch for a given ticket. Second caller gets `already_dispatching` immediately.
+---
 
-2. **Compare-and-swap on status**: Inside the lock, the code re-reads ticket status and only proceeds if it's `pending` or `ready`. This catches cases where a prior dispatch already advanced the status.
+### 2. worker-lawpass-1955 (MVP Criteria)
 
-3. **Lock lifecycle management**: `_cleanup_ticket_lock()` removes the lock entry after dispatch completes (success, error, or timeout), preventing unbounded dict growth. Lock is held for the full subprocess duration via the `_wait()` thread, released in a `finally` block.
+| Field | Value |
+|-------|-------|
+| **Project** | lawpass |
+| **Task** | Define lawpass MVP completion criteria |
+| **Verdict** | SUCCESS |
+| **PR** | None (research only) |
+| **Duration** | ~4m 54s |
 
-### Key code paths changed
+**Output:** MVP completion checklist produced. Key finding: no Stripe/payment/billing references exist in the frontend TypeScript files — payment integration is a gap that needs to be addressed for MVP.
 
-| Location | Change |
-|----------|--------|
-| `foreman.py:30-47` | New: `_dispatch_locks`, `_get_ticket_lock()`, `_cleanup_ticket_lock()` |
-| `foreman.py:50-121` | Rewritten `_dispatch_async()` with lock acquisition, CAS check, structured error handling |
-| `foreman.py:95-118` | `_wait()` restructured: nested try/finally ensures lock release on all exit paths including timeout |
+**Follow-up ticket:** `47860dd9` — Implement MVP criteria, priority on payment integration (NORMAL)
 
-### Error path analysis
+---
 
-All exit paths correctly release the lock:
-- **Lock contention** (line 62): Returns immediately, lock never acquired
-- **CAS rejection** (lines 73-74): Explicit `lock.release()` + cleanup
-- **Pre-Popen exception** (lines 78-81): `except` block releases + re-raises
-- **FileNotFoundError from Popen** (lines 90-92): Release + cleanup + return error
-- **Subprocess timeout** (lines 99-103): `_wait()` finally block at lines 116-118
-- **Normal completion** (lines 108-115): `_wait()` finally block at lines 116-118
+### 3. worker-movies-2129 (Status Determination)
 
-### Test Coverage
+| Field | Value |
+|-------|-------|
+| **Project** | movies (family-movie-queue) |
+| **Task** | Process worker_done sessions 1943, 1952 + determine project status |
+| **Verdict** | SUCCESS |
+| **PR** | https://github.com/konradish/family-movie-queue/pull/92 |
+| **Duration** | ~1m 28s |
 
-5 tests in `backend/tests/test_dispatch_race.py` (all passing):
+**Output:**
+- **Dev environment: UP.** Both worker-1943 and worker-1952 confirmed dev and prod are healthy
+- **Healer diagnosis was false positive** — env vars are present; TAILSCALE_AUTHKEY is infrastructure-level, not app-level
+- **Recommendation: REACTIVATE.** Remove movies from DEFAULT_PAUSED
+- **Next work:** Wire notification events (`voted`, `watched`, `created_collection`) into notification generation — UI is fully built but mostly empty because common actions don't generate events yet
 
-| Test | What it verifies |
-|------|-----------------|
-| `test_concurrent_dispatch_same_ticket_blocked` | Two threads race on same ticket; exactly one blocked |
-| `test_dispatch_rejects_non_pending_ticket` | CAS rejects ticket with status=dispatching |
-| `test_dispatch_rejects_dispatched_ticket` | CAS rejects ticket with status=dispatched |
-| `test_lock_cleanup_after_dispatch` | Lock dict entry removed after failed dispatch |
-| `test_independent_tickets_dispatch_concurrently` | Different tickets dispatch in parallel (no false blocking) |
+**Follow-up tickets:**
+- `f75bd0d4` — Remove movies from DEFAULT_PAUSED (HIGH, dispatch-factory)
+- `f6251c5a` — Wire notification events (NORMAL, movies)
+
+---
+
+### 4. worker-recipebrain-2129 (SSE Investigation Processing)
+
+| Field | Value |
+|-------|-------|
+| **Project** | recipebrain (meal_tracker) |
+| **Task** | Process recipebrain-1939 SSE test investigation results |
+| **Verdict** | SUCCESS |
+| **PR** | None (research only) |
+| **Duration** | ~6m 20s |
+
+**Output:** SSE investigation is fully resolved via PR #82. Worker confirmed no further SSE-related Python file changes needed. The root cause analysis from 4+ failed attempts (workers 1200, 1449, 1906, 1911) culminated in a working fix.
+
+**Follow-up ticket:** `5fbc4390` — Verify PR #82 deploy stability (LOW)
+
+---
+
+### 5. worker-dispatch-factory-2129 (Unpause electricapp)
+
+| Field | Value |
+|-------|-------|
+| **Project** | dispatch-factory |
+| **Task** | Remove electricapp from DEFAULT_PAUSED |
+| **Verdict** | SUCCESS (no code changes needed) |
+| **PR** | None (already satisfied) |
+| **Duration** | ~1m 11s |
+
+**Output:** All acceptance criteria were already satisfied:
+1. `DEFAULT_PAUSED` was removed in a prior refactor — `paused_projects.py:30-33` now says "No hardcoded defaults"
+2. Healer circuit breaker reset via `POST /api/healer-circuit-breaker/electricapp/reset` — confirmed
+3. Other projects (voice-bridge, blog, schoolbrain) remain paused
+
+No code changes required. Worker wrote `DISPATCH_FAILED.md` documenting the no-op finding.
+
+**Follow-up ticket:** None needed (task complete)
+
+---
+
+## Tickets Created
+
+| Ticket ID | Project | Priority | Task |
+|-----------|---------|----------|------|
+| `548f981c` | electricapp | HIGH | Deploy 2 stale commits + split monolith |
+| `47860dd9` | lawpass | NORMAL | Implement MVP criteria (payment integration first) |
+| `f6251c5a` | movies | NORMAL | Wire notification events |
+| `5fbc4390` | recipebrain | LOW | Verify SSE fix deployment stability |
+| `f75bd0d4` | dispatch-factory | HIGH | Remove movies from DEFAULT_PAUSED |
 
 ## Recommendations
 
-1. **Merge this fix** -- the race is confirmed and the fix is tested.
-2. **Monitor for stale locks** -- If a dispatch thread dies without hitting `finally` (e.g., OOM kill), the lock persists. Consider a TTL-based cleanup in the heartbeat loop (remove locks older than 15 minutes).
-3. **Consider SQLite-level CAS** -- For multi-process deployments, `UPDATE ... WHERE status IN ('pending', 'ready')` with rowcount check would provide DB-level atomicity. Not urgent since the factory is single-process.
+1. **Immediate:** Merge movies PR#92 and dispatch the `f75bd0d4` ticket to unpause movies
+2. **Immediate:** Review electricapp PR#86 scoping report, then dispatch `548f981c` for the P0 deploy
+3. **Soon:** The lawpass MVP gap analysis should be reviewed before dispatching implementation work — payment integration is a significant scope item
+4. **Low priority:** recipebrain SSE verification is a cleanup task, not blocking
 
 ## References
 
-- `backend/foreman.py:30-121` -- lock infrastructure and `_dispatch_async()` implementation
-- `backend/tests/test_dispatch_race.py` -- race condition test suite (5 tests)
-- `backend/backlog.py` -- `list_tickets()`, `update_ticket()`, `mark_dispatched()` used by dispatch flow
-- Incident evidence: workers 1952 and 1953 both running ticket `1f99ec97`
+- Artifact directory: `~/.local/share/dispatch/`
+- Session artifacts read: `worker-{electricapp,lawpass,movies,recipebrain,dispatch-factory}-2129-{worker-done.json,result.md,.prompt,.log}`
+- Also read: `worker-lawpass-1955-{worker-done.json,result.md,.prompt,.log}`
+- Backend API: `http://127.0.0.1:8420/api/backlog` (POST for ticket creation)
+- Backend code: `backend/main.py`, `backend/backlog.py`, `backend/db.py`, `backend/artifacts.py`
