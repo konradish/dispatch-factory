@@ -1,58 +1,30 @@
-# Dispatch Ops Report: Factory Process Restart + Validation
+# Dispatch Ops Report — 2026-03-30
 
-**Date:** 2026-03-30 01:40 UTC
-**Operator:** dispatch ops worker (unattended)
+## Task
+Fix two dispatch reliability bugs in `backend/heartbeat.py`.
 
-## 1. Factory Restart
+## Changes Made
 
-- Killed stale `factory` tmux session (created 2026-03-29 21:29)
-- Started new session: `tmux new-session -d -s factory -c /mnt/c/projects/dispatch-factory 'make dev'`
-- Health check after 10s startup: `{"status":"ok"}`
+### BUG 1 — Duplicate dispatch race (heartbeat.py:784)
+**Problem:** The dedup prefix set in `_auto_dispatch()` only checked tickets with `status="dispatched"`, missing tickets in the `dispatching` transitional state. During the dispatching-to-dispatched window, a duplicate ticket could slip through.
 
-## 2. PR #90 Code Verification
-
+**Fix:** Changed line 784 to include both statuses:
+```python
+# Before
+inflight_tickets = backlog.list_tickets(status="dispatched")
+# After
+inflight_tickets = backlog.list_tickets(status="dispatched") + backlog.list_tickets(status="dispatching")
 ```
-07269e6 [dispatch] Fix 3 bugs in dispatch-factory backend that cause silent tic (#90)
-41b398a fix: add worker_done timeout escalation to prevent sessions stuck indefinitely (#89)
-6e8d002 fix: 4 critical bugs breaking completion pipeline (#88)
-```
 
-Confirmed: commit `07269e6` (PR #90 bug fixes) is on HEAD.
+### BUG 2 — False deploy recording (heartbeat.py:237)
+**Problem:** The `state=='completed'` block called `healer_circuit_breaker.record_successful_deploy(project)`, but `completed` means the session finished without a verified deploy. Only `deployed` state confirms a deploy actually landed. This falsely inflated the healer circuit breaker's success count.
 
-## 3. Backend Tests
+**Fix:** Removed the `record_successful_deploy` call from the `completed` block (line 237). The `deployed` block (lines 205-216) already correctly calls it.
 
-Initial run: **1 failure** in `test_factory_idle_mode.py`
+## Test Results
+- 50 tests passed, 8 failed (pre-existing failures unrelated to these changes)
+- Pre-existing failures confirmed identical on `main` before changes (SQLite DB path issues in `test_alert_lifecycle.py` and `test_meta_work_ratio.py`)
+- All dispatch-relevant tests pass: `test_dispatch_race.py` (8/8), `test_healer_circuit_breaker.py` (9/9), `test_post_heal_verify.py` (4/4)
 
-### Bug Found: `backlog.settings` mock targets non-existent attribute
-
-The `backlog` module was migrated to SQLite (via `db.py`) but tests still mocked `backlog.settings` — an attribute that no longer exists. Fixed by mocking `backlog.list_tickets` instead, which is the actual function called by `factory_idle_mode.is_idle()`.
-
-### Bug Found: `_get_active_projects` regex matches section headers
-
-The regex `\*{0,2}([a-z][a-z0-9-]+)\*{0,2}` in `factory_idle_mode._get_active_projects()` matched "ctive" from the header `## Active Projects`. Fixed by restricting matches to list item lines (starting with `-`).
-
-### Final result: **31 passed, 0 failed**
-
-## 4. Backlog Status Post-Restart
-
-| Status | Count |
-|--------|-------|
-| pending | 11 |
-| dispatched | 1 |
-| completed | 178 |
-| cancelled | 156 |
-| failed | 13 |
-| needs_input | 3 |
-| blocked | 2 |
-| **Total** | **364** |
-
-Factory is healthy and dispatching. 11 pending tickets available for processing.
-
-## Code Changes
-
-1. **`backend/factory_idle_mode.py`** — Added list-item filter to `_get_active_projects` regex to prevent matching section headers
-2. **`backend/tests/test_factory_idle_mode.py`** — Replaced `mock.patch("backlog.settings")` with `mock.patch("backlog.list_tickets", return_value=[...])` across all test functions (6 occurrences)
-
-## Outcome
-
-Factory restarted successfully with PR #90 code. Two latent bugs found and fixed during test validation. All 31 tests pass. Pipeline operational with 11 pending tickets.
+## Files Modified
+- `backend/heartbeat.py` — 2 lines changed (1 added, 1 removed)
