@@ -27,6 +27,7 @@ class HeartbeatConfig:
     interval_minutes: int = 30
     auto_dispatch: bool = False
     max_concurrent: int = 3
+    max_verification_depth: int = 2
 
 
 @dataclass
