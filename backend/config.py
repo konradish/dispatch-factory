@@ -28,6 +28,7 @@ class HeartbeatConfig:
     auto_dispatch: bool = False
     max_concurrent: int = 3
     max_verification_depth: int = 2
+    auto_verify: bool = False
 
 
 @dataclass
