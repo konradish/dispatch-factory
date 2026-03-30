@@ -370,7 +370,7 @@ def list_sessions_with_timestamps() -> list[dict]:
     # Refresh state for sessions marked "running" in cache
     active_ids = {s["id"] for s in get_active_sessions()}
     with db.get_conn() as conn:
-        running = conn.execute("SELECT id FROM sessions WHERE state = 'running' LIMIT 20").fetchall()
+        running = conn.execute("SELECT id FROM sessions WHERE state IN ('running', 'worker_done', 'planning') LIMIT 40").fetchall()
     for r in running:
         sid = r["id"]
         _update_session_state(sid)
