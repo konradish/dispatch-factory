@@ -163,7 +163,7 @@ def _reconcile_backlog() -> list[str]:
     # Stale dispatching tickets: if dispatching for >10 min with no session_id,
     # the _dispatch_async background thread died. Reset to pending.
     for ticket in backlog.list_tickets(status="dispatching"):
-        dispatched_age = time.time() - ticket.get("created_at", 0)
+        dispatched_age = time.time() - (ticket.get("dispatched_at") or ticket.get("created_at", 0))
         if dispatched_age > 600 and not ticket.get("session_id"):
             backlog.update_ticket(ticket["id"], {"status": "pending"})
             actions.append(f"reset stale dispatching ticket {ticket['id']} → pending ({dispatched_age/60:.0f}m old)")
@@ -458,7 +458,7 @@ def _gc_zombie_sessions() -> list[str]:
 
     for session in all_sessions:
         sid = session["id"]
-        if session["state"] != "running":
+        if session["state"] not in ("running", "planning"):
             continue
         if sid in active_ids:
             continue  # Worker is still alive
