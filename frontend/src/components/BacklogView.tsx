@@ -54,13 +54,6 @@ const COLUMNS: ColumnDef[] = [
   { id: "done", title: "Done", statuses: ["completed", "failed", "cancelled", "blocked"], borderColor: "border-accent-green", collapsible: true },
 ];
 
-// Map column id -> target status when dropping into that column
-const DROP_TARGET_STATUS: Record<string, string> = {
-  intake: "intake",
-  ready: "ready",
-  inflight: "dispatched",
-  done: "cancelled",
-};
 
 const PRIORITY_ORDER: Record<string, number> = {
   urgent: 0, high: 1, normal: 2, low: 3,
@@ -108,13 +101,6 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
   const [task, setTask] = useState("");
   const [project, setProject] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  // Drag state
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
-
-  // Cancel drop zone
-  const [cancelHover, setCancelHover] = useState(false);
 
   // Ticket detail
   const [selectedTicket, setSelectedTicket] = useState<BacklogTicket | null>(null);
@@ -186,74 +172,6 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
     else load();
   }
 
-  // -- Drag & Drop ------------------------------------------------------------
-
-  function onDragStart(e: React.DragEvent, ticketId: string) {
-    e.dataTransfer.setData("text/plain", ticketId);
-    e.dataTransfer.effectAllowed = "move";
-    setDragId(ticketId);
-  }
-
-  function onDragEnd() {
-    setDragId(null);
-    setDragOverCol(null);
-    setCancelHover(false);
-  }
-
-  function onColumnDragOver(e: React.DragEvent, colId: string) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragOverCol(colId);
-  }
-
-  function onColumnDragLeave() {
-    setDragOverCol(null);
-  }
-
-  async function onColumnDrop(e: React.DragEvent, colId: string) {
-    e.preventDefault();
-    setDragOverCol(null);
-    const ticketId = e.dataTransfer.getData("text/plain");
-    if (!ticketId) return;
-
-    const ticket = tickets.find((t) => t.id === ticketId);
-    if (!ticket) return;
-
-    const targetCol = COLUMNS.find((c) => c.id === colId);
-    if (!targetCol) return;
-
-    // Already in this column?
-    if (targetCol.statuses.includes(ticket.status)) return;
-
-    if (colId === "inflight") {
-      // Dispatch
-      await handleDispatch(ticketId);
-    } else if (colId === "done") {
-      // Cancel
-      await handleStatusChange(ticketId, "cancelled");
-    } else {
-      const newStatus = DROP_TARGET_STATUS[colId];
-      if (newStatus) await handleStatusChange(ticketId, newStatus);
-    }
-  }
-
-  // Cancel drop zone
-  function onCancelDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setCancelHover(true);
-  }
-
-  function onCancelDragLeave() {
-    setCancelHover(false);
-  }
-
-  async function onCancelDrop(e: React.DragEvent) {
-    e.preventDefault();
-    setCancelHover(false);
-    const ticketId = e.dataTransfer.getData("text/plain");
-    if (ticketId) await handleStatusChange(ticketId, "cancelled");
-  }
 
   // -- Ticket sorting per column ----------------------------------------------
 
@@ -351,16 +269,12 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
       <div className="flex gap-4 flex-1 min-h-0 overflow-x-auto pb-2">
         {COLUMNS.map((col) => {
           const colTickets = ticketsForColumn(col);
-          const isDragOver = dragOverCol === col.id && dragId !== null;
           const isCollapsed = col.collapsible && !doneExpanded;
 
           return (
             <div
               key={col.id}
               className={`flex flex-col min-w-[260px] flex-1 rounded-lg border-t-2 ${col.borderColor} bg-bg-surface/50`}
-              onDragOver={(e) => onColumnDragOver(e, col.id)}
-              onDragLeave={onColumnDragLeave}
-              onDrop={(e) => onColumnDrop(e, col.id)}
             >
               {/* Column header */}
               <div className="flex items-center justify-between px-3 py-2 shrink-0">
@@ -387,9 +301,7 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
 
               {/* Cards container */}
               <div
-                className={`flex-1 overflow-y-auto px-2 pb-2 space-y-2 transition-colors rounded-b-lg ${
-                  isDragOver ? "bg-bg-surface-alt/40" : ""
-                }`}
+                className="flex-1 overflow-y-auto px-2 pb-2 space-y-2 rounded-b-lg"
               >
                 {isCollapsed ? (
                   <div className="text-center py-4 text-xs text-gray-600">
@@ -401,9 +313,6 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
                       key={ticket.id}
                       ticket={ticket}
                       columnId={col.id}
-                      isDragging={dragId === ticket.id}
-                      onDragStart={onDragStart}
-                      onDragEnd={onDragEnd}
                       onDispatch={handleDispatch}
                       onRetry={(id) => handleStatusChange(id, "ready")}
                       onSelectSession={onSelectSession}
@@ -425,22 +334,6 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
           );
         })}
       </div>
-
-      {/* Cancel drop zone (only visible while dragging) */}
-      {dragId && (
-        <div
-          className={`shrink-0 border-2 border-dashed rounded-lg px-4 py-2 text-center text-xs transition-colors ${
-            cancelHover
-              ? "border-accent-red/60 bg-accent-red/10 text-accent-red"
-              : "border-gray-700 text-gray-600"
-          }`}
-          onDragOver={onCancelDragOver}
-          onDragLeave={onCancelDragLeave}
-          onDrop={onCancelDrop}
-        >
-          Drop here to cancel
-        </div>
-      )}
 
       {/* Ticket detail slide-over */}
       {selectedTicket && (
@@ -564,9 +457,6 @@ export default function BacklogView({ onSelectSession }: BacklogViewProps) {
 interface KanbanCardProps {
   ticket: BacklogTicket;
   columnId: string;
-  isDragging: boolean;
-  onDragStart: (e: React.DragEvent, id: string) => void;
-  onDragEnd: () => void;
   onDispatch: (id: string) => void;
   onRetry: (id: string) => void;
   onSelectSession: (sessionId: string) => void;
