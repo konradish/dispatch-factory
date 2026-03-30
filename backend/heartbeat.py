@@ -66,7 +66,12 @@ async def heartbeat_loop(interval: int | None = None) -> None:
         startup_actions = []
         import pipeline_runner
         for completion in pipeline_runner.scan_for_completions():
-            startup_actions.extend(pipeline_runner.process_worker_completion(completion))
+            try:
+                startup_actions.extend(pipeline_runner.process_worker_completion(completion))
+            except Exception:
+                sid = completion.get('_session_id', completion.get('session', '?'))
+                startup_actions.append(f"pipeline_runner startup error for {sid}")
+                logger.exception("Startup completion error for %s", sid)
         startup_actions.extend(_gc_zombie_sessions())
         if startup_actions:
             logger.info("Startup GC: %s", startup_actions)
@@ -96,12 +101,14 @@ def _beat() -> list[str]:
     # 1. Process completed workers (post-worker pipeline stages)
     #    Runs BEFORE zombie GC so that pipeline_runner can write -result.md
     #    artifacts before sessions are marked abandoned.
-    try:
-        import pipeline_runner
-        for completion in pipeline_runner.scan_for_completions():
+    import pipeline_runner
+    for completion in pipeline_runner.scan_for_completions():
+        try:
             actions.extend(pipeline_runner.process_worker_completion(completion))
-    except Exception as e:
-        actions.append(f"pipeline_runner error: {e}")
+        except Exception as e:
+            sid = completion.get('_session_id', completion.get('session', '?'))
+            actions.append(f"pipeline_runner error for {sid}: {e}")
+            logger.exception("pipeline_runner error for %s", sid)
 
     # 2. Garbage-collect zombie sessions (running state, no active worker)
     actions.extend(_gc_zombie_sessions())
