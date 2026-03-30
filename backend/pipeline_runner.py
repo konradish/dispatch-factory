@@ -88,6 +88,14 @@ def process_worker_completion(completion: dict) -> list[str]:
     task_type = completion.get("task_type", "code")
     auto_merge = completion.get("auto_merge", False)
 
+    # Check if this is a factory self-fix eligible for auto-merge
+    if not auto_merge and task_type == "code" and pr_url:
+        import auto_merge as auto_merge_mod
+        project_path = _get_project_path(project)
+        if auto_merge_mod.is_eligible_for_auto_merge(pr_url, project, project_path):
+            auto_merge = True
+            actions.append(f"pipeline: {session_id} eligible for factory self-fix auto-merge")
+
     # Non-code tasks: auto-merge the report PR (no review needed)
     if task_type != "code" and pr_url:
         merge_ok = _auto_merge_pr(pr_url, project, session_id)
