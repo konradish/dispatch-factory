@@ -395,10 +395,7 @@ def list_sessions_with_timestamps() -> list[dict]:
                         age_minutes = 0
                     if age_minutes < ZOMBIE_THRESHOLD_MINUTES:
                         continue
-                conn.execute(
-                    "UPDATE sessions SET state = 'abandoned', updated_at = ? WHERE id = ?",
-                    (_time.time(), sid),
-                )
+                abandon_session(sid, "zombie detected in list_sessions")
     with db.get_conn() as conn:
         rows = conn.execute(
             "SELECT * FROM sessions ORDER BY mtime DESC"

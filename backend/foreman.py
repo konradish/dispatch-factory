@@ -86,10 +86,12 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
         proc = subprocess.Popen(
             cmd, stdout=log_file, stderr=subprocess.STDOUT,
         )
-    except FileNotFoundError as e:
+    except Exception as e:
+        log_file.close()
         backlog.update_ticket(ticket_id, {"status": "pending"})
         lock.release()
         _cleanup_ticket_lock(ticket_id)
+        logger.error("dispatch Popen failed for %s: %s", ticket_id, e)
         return {"status": "error", "detail": str(e)}
 
     def _wait():
@@ -107,9 +109,16 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
             stdout = log_path.read_text()
             if proc.returncode == 0:
                 match = re.search(r"session\s*:\s*([\w-]+)", stdout)
-                session_id = match.group(1) if match else "unknown"
-                backlog.mark_dispatched(ticket_id, session_id)
-                logger.info("dispatch ok for %s → %s", ticket_id, session_id)
+                if match:
+                    session_id = match.group(1)
+                    backlog.mark_dispatched(ticket_id, session_id)
+                    logger.info("dispatch ok for %s → %s", ticket_id, session_id)
+                else:
+                    logger.error(
+                        "dispatch exited 0 for %s but no session ID in output: %s",
+                        ticket_id, stdout[:200],
+                    )
+                    backlog.update_ticket(ticket_id, {"status": "pending"})
             else:
                 logger.error("dispatch failed for %s (rc=%d): %s", ticket_id, proc.returncode, stdout[:200])
                 backlog.update_ticket(ticket_id, {"status": "pending"})
