@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 import time
 
 import artifacts
@@ -25,7 +24,6 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
-import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -109,6 +107,14 @@ def _beat() -> list[str]:
             sid = completion.get('_session_id', 'unknown')
             actions.append(f'pipeline_runner error for {sid}: {e}')
             logger.warning('completion processing failed for %s: %s', sid, e)
+            # Write an error result so scan_for_completions won't retry forever.
+            try:
+                pipeline_runner._write_result(
+                    sid, f"FAILED (pipeline_runner error: {e})", "", ""
+                )
+                actions.append(f'wrote error result for {sid} to stop retry loop')
+            except Exception:
+                logger.exception('failed to write error result for %s', sid)
 
     # 2. Garbage-collect zombie sessions (running state, no active worker)
     actions.extend(_gc_zombie_sessions())
