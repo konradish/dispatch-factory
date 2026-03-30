@@ -162,6 +162,8 @@ def _update_session_state(session_id: str) -> None:
         if not entry.name.startswith(session_id):
             continue
         suffix_part = entry.name[len(session_id):]
+        if suffix_part and suffix_part[0] not in ('-', '.'):
+            continue  # Prefix collision — not this session
         try:
             mt = entry.stat().st_mtime
             if mt > mtime:
@@ -239,6 +241,8 @@ def get_session(session_id: str) -> dict | None:
         if not entry.name.startswith(prefix):
             continue
         suffix_part = entry.name[len(prefix):]
+        if suffix_part and suffix_part[0] not in ('-', '.'):
+            continue  # Prefix collision — not this session
 
         for suffix, name in ARTIFACT_TYPES.items():
             if suffix_part == suffix:
@@ -559,6 +563,8 @@ def get_session_timeline(session_id: str) -> list[dict]:
         if not entry.name.startswith(prefix):
             continue
         suffix_part = entry.name[len(prefix):]
+        if suffix_part and suffix_part[0] not in ('-', '.'):
+            continue  # Prefix collision — not this session
         for suffix, name in ARTIFACT_TYPES.items():
             if suffix_part == suffix:
                 try:
