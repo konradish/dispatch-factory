@@ -316,6 +316,9 @@ def _maybe_create_auto_verify_ticket(ticket: dict, session_id: str) -> list[str]
     When a worker_done session's task contains 'deploy' or 'fix', we create
     a follow-up verification ticket so the result is explicitly confirmed.
     """
+    if not settings.heartbeat.auto_verify:
+        return []
+
     task_text = ticket.get("task", "")
     if not _DEPLOY_FIX_RE.search(task_text):
         return []

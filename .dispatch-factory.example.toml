@@ -51,3 +51,7 @@ max_concurrent = 3
 # writes a summary result instead.  Prevents runaway verification chains
 # (e.g. 4-deep chain consuming 5 workers for one question).
 max_verification_depth = 2
+
+# Auto-create verification tickets for deploy/fix tasks.
+# Disabled by default — verify task_type cannot dispatch (binary bug).
+auto_verify = false
