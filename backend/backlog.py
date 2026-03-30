@@ -179,6 +179,15 @@ def has_eligible_higher_priority(priority: str) -> bool:
     return False
 
 
+def get_ticket(ticket_id: str) -> dict | None:
+    """Fetch a single ticket by ID. Returns None if not found."""
+    with db.get_conn() as conn:
+        row = conn.execute("SELECT * FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+        if not row:
+            return None
+        return db.row_to_ticket(row, db.get_ticket_notes(conn, row["id"]))
+
+
 def delete_ticket(ticket_id: str) -> bool:
     """Delete a ticket by ID."""
     with db.get_conn() as conn:

@@ -35,6 +35,21 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     that waits for exit, parses session ID, and calls mark_dispatched.
     The heartbeat picks up completion artifacts independently.
     """
+    # Duplicate-dispatch guard: if ticket already has a running session, skip.
+    # Prevents spawning multiple workers for the same ticket (e.g. workers
+    # 1906+1911 both running recipebrain test simultaneously).
+    ticket = backlog.get_ticket(ticket_id)
+    if ticket:
+        existing_session_id = ticket.get("session_id")
+        if existing_session_id:
+            session = artifacts.get_session(existing_session_id)
+            if session and session.get("state") == "running":
+                logger.warning(
+                    "Duplicate dispatch blocked: ticket %s already has running session %s",
+                    ticket_id, existing_session_id,
+                )
+                return {"status": "skipped", "detail": f"session {existing_session_id} already running"}
+
     backlog.update_ticket(ticket_id, {"status": "dispatching"})
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"

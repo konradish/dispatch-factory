@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 import time
 
 import artifacts
@@ -25,7 +24,6 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
-import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -610,6 +608,16 @@ def _auto_dispatch() -> list[str]:
         if backlog.has_inflight_ticket(ticket["project"]):
             actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
             continue
+
+        # Duplicate-dispatch guard: skip if ticket already has a running session.
+        # Belt-and-suspenders — _dispatch_async also checks, but catching it here
+        # avoids unnecessary work and logging noise.
+        existing_sid = ticket.get("session_id")
+        if existing_sid:
+            session = artifacts.get_session(existing_sid)
+            if session and session.get("state") == "running":
+                actions.append(f"skipped {ticket['id']}: session {existing_sid} already running")
+                continue
 
         # Meta-work ratio: block dispatch-factory work when ratio is too high
         if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
