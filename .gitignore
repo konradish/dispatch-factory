@@ -39,3 +39,7 @@ Thumbs.db
 tmp*.py
 tmp*.txt
 tmp*.json
+
+# SQLite databases
+*.sqlite3
+backend/db.sqlite3
