@@ -160,6 +160,21 @@ async def _watch_artifacts() -> None:
 # App lifecycle
 # ---------------------------------------------------------------------------
 
+def _read_git_commit() -> str:
+    """Read the short git commit hash at startup, or 'unknown' on failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+_git_commit: str = _read_git_commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -168,6 +183,7 @@ async def lifespan(app: FastAPI):
     logger.info("  dispatch_bin:  %s", settings.dispatch_bin)
     logger.info("  controls:      %s", settings.enable_controls)
     logger.info("  terminal:      %s", settings.terminal.enabled)
+    logger.info("  git_commit:    %s", _git_commit)
 
     dispatch_path = Path(settings.dispatch_bin)
     if not dispatch_path.is_file():
@@ -214,7 +230,7 @@ app.add_middleware(
 
 @app.get("/api/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "git_commit": _git_commit}
 
 
 @app.get("/api/projects")

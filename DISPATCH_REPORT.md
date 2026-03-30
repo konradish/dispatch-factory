@@ -1,48 +1,48 @@
-# Task-Text Dedup Guard for `_auto_dispatch()`
+# Add git commit hash to /api/health endpoint
 
 ## Summary
 
-Added a task-text dedup guard to `_auto_dispatch()` in `backend/heartbeat.py` that prevents dispatching tickets whose task text (first 80 chars) matches any already in-flight ticket. This closes a gap where the existing per-project inflight guard (line 618) wouldn't catch duplicate tasks across different projects or re-queued identical tasks.
+Added the running git commit hash to the `/api/health` endpoint response so the foreman can detect stale processes after merges. The commit hash is read once at module import time via `git rev-parse --short HEAD` and included as `git_commit` in the health response. This prevents the 8-cycle stale-process bug by enabling version comparison.
 
 ## Findings
 
-### Problem
+### Before
+The health endpoint (`backend/main.py:215-217`) returned only `{"status": "ok"}` — no way to detect whether the running process matches the current repo HEAD.
 
-`_auto_dispatch()` had a per-project inflight guard (`backlog.has_inflight_ticket(project)`) that prevents dispatching two tickets for the same project simultaneously. However, it had no guard against dispatching tickets with identical task text — meaning if two tickets existed with the same task description (even across different projects, or if a ticket was re-created while the original was still in-flight), both could be dispatched.
+### Changes Made
 
-### Implementation
+1. **`_read_git_commit()` function** (`backend/main.py:163-172`): Reads `git rev-parse --short HEAD` with a 5-second timeout. Returns `"unknown"` on any failure (not in a git repo, git not installed, etc.). Uses array args per project security model — no shell injection risk.
 
-**Location:** `backend/heartbeat.py`, `_auto_dispatch()` function (lines 599–684 after edit)
+2. **Module-level `_git_commit` variable** (`backend/main.py:175`): Captured once at import time, not on every request. This is correct because the commit hash can only change if the process is restarted.
 
-**Changes:**
+3. **Health endpoint** (`backend/main.py:228-230`): Now returns `{"status": "ok", "git_commit": "abc1234"}`.
 
-1. **Before the dispatch loop** (line 601–607): Fetch all `dispatched` tickets via `backlog.list_tickets(status="dispatched")`, build a `dict[str, str]` mapping `task[:80]` prefixes to ticket IDs.
+4. **Startup log** (`backend/main.py:185`): Logs the commit hash alongside other config values for debugging.
 
-2. **Inside the loop** (lines 622–628): After the per-project inflight check, compare the candidate ticket's `task[:80]` against the prefix set. If matched, log and skip with message: `skipped {ticket_id}: task text matches in-flight {other_id}`.
+### Foreman Integration
 
-3. **After successful dispatch** (lines 678–680): Add the newly-dispatched ticket's task prefix to the set so subsequent loop iterations catch duplicates within the same batch.
+The foreman can now:
+```python
+# Compare running version to repo HEAD
+running = requests.get("http://localhost:8000/api/health").json()["git_commit"]
+repo_head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+if running != repo_head:
+    # Restart the factory process
+```
 
-### Design Decisions
-
-- **80-char prefix match**: Sufficient to catch identical or near-identical tasks while avoiding false positives from tasks that merely share a common opening phrase. Task descriptions in this system are typically specific enough that 80 chars is distinctive.
-- **`dict` over `set`**: Using a dict allows reporting *which* in-flight ticket matched, improving debuggability in logs.
-- **Single `list_tickets` call**: The dispatched tickets are fetched once before the loop rather than per-candidate, minimizing I/O.
-- **Guard ordering**: Placed after per-project inflight check (which is cheaper) but before meta-work ratio and circuit breaker checks, since dedup is a fundamental correctness guard.
-
-### Verification
-
-- `make lint`: Passes (2 pre-existing lint errors unrelated to this change: unused `subprocess` and `reviewer_calibration` imports)
-- `make test`: 31 passed, 15 pre-existing failures (all in `test_alert_lifecycle.py`, `test_meta_work_ratio.py`, `test_factory_idle_mode.py` — caused by `backlog.settings` attribute error, unrelated to this change)
-- No existing tests for `_auto_dispatch()` were found to regress against.
+### Test Impact
+- All 42 previously-passing tests still pass
+- 15 pre-existing failures (unrelated `backlog.settings` attribute errors) unchanged
 
 ## Recommendations
 
-1. **Add unit tests for `_auto_dispatch()`** — the function has no test coverage. A test should verify: (a) dedup skips matching task text, (b) newly dispatched tasks are added to the prefix set, (c) empty task text doesn't cause false matches.
-2. **Fix pre-existing test failures** — 15 tests fail due to `backlog.settings` attribute error, likely from a recent refactor that moved settings out of the backlog module.
-3. **Fix pre-existing lint errors** — remove unused `subprocess` and `reviewer_calibration` imports in `heartbeat.py`.
+1. **Immediate**: Merge this PR — the change is minimal and self-contained
+2. **Follow-up**: Add foreman logic to compare `git_commit` against repo HEAD and auto-restart stale processes
+3. **Optional**: Consider adding `started_at` timestamp to the health endpoint for uptime monitoring
 
 ## References
 
-- `backend/heartbeat.py:586-684` — `_auto_dispatch()` function
-- `backend/backlog.py:15` — `list_tickets()` function signature
-- `backend/heartbeat.py:618` — existing per-project inflight guard
+- `backend/main.py:163-175` — `_read_git_commit()` and module-level capture
+- `backend/main.py:185` — startup log line
+- `backend/main.py:228-230` — updated health endpoint
+- Project security model: subprocess uses array args, no shell interpolation (CLAUDE.md)
