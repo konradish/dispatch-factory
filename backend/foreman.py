@@ -27,25 +27,6 @@ from config import settings
 
 logger = logging.getLogger("dispatch-factory.foreman")
 
-# Per-ticket locks to prevent concurrent dispatch of the same ticket.
-# Guards the read-check-update race between status read and status write.
-_dispatch_locks: dict[str, threading.Lock] = {}
-_dispatch_locks_guard = threading.Lock()
-
-
-def _get_ticket_lock(ticket_id: str) -> threading.Lock:
-    """Get or create a per-ticket lock."""
-    with _dispatch_locks_guard:
-        if ticket_id not in _dispatch_locks:
-            _dispatch_locks[ticket_id] = threading.Lock()
-        return _dispatch_locks[ticket_id]
-
-
-def _cleanup_ticket_lock(ticket_id: str) -> None:
-    """Remove a ticket lock after dispatch completes (prevents unbounded growth)."""
-    with _dispatch_locks_guard:
-        _dispatch_locks.pop(ticket_id, None)
-
 
 def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     """Fire-and-forget dispatch via Popen. Returns immediately.
@@ -53,33 +34,13 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     Marks ticket as 'dispatching', spawns subprocess in background thread
     that waits for exit, parses session ID, and calls mark_dispatched.
     The heartbeat picks up completion artifacts independently.
-
-    Uses a per-ticket lock + compare-and-swap to prevent duplicate dispatch
-    when concurrent heartbeat/foreman cycles race on the same ticket.
     """
-    lock = _get_ticket_lock(ticket_id)
-    if not lock.acquire(blocking=False):
-        logger.warning("duplicate dispatch blocked for ticket %s (lock held)", ticket_id)
-        return {"status": "already_dispatching", "detail": "Another dispatch is in progress"}
+    # Duplicate-dispatch guard: skip if ticket already has a session
+    tickets = [t for t in backlog.list_tickets() if t["id"] == ticket_id]
+    if tickets and tickets[0].get("session_id"):
+        return {"status": "skipped", "detail": f"ticket already dispatched as {tickets[0]['session_id']}"}
 
-    try:
-        # Compare-and-swap: only proceed if ticket is still in a dispatchable state
-        ticket = next((t for t in backlog.list_tickets() if t["id"] == ticket_id), None)
-        if ticket and ticket.get("status") not in ("pending", "ready"):
-            logger.warning(
-                "duplicate dispatch blocked for ticket %s (status=%s)",
-                ticket_id, ticket.get("status"),
-            )
-            lock.release()
-            _cleanup_ticket_lock(ticket_id)
-            return {"status": "already_dispatching", "detail": f"Ticket status is '{ticket.get('status')}', not pending/ready"}
-
-        backlog.update_ticket(ticket_id, {"status": "dispatching", "dispatched_at": time.time()})
-    except Exception:
-        lock.release()
-        _cleanup_ticket_lock(ticket_id)
-        raise
-
+    backlog.update_ticket(ticket_id, {"status": "dispatching", "dispatched_at": time.time()})
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
         log_file = open(log_path, "w")
@@ -88,34 +49,28 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
         )
     except FileNotFoundError as e:
         backlog.update_ticket(ticket_id, {"status": "pending"})
-        lock.release()
-        _cleanup_ticket_lock(ticket_id)
         return {"status": "error", "detail": str(e)}
 
     def _wait():
         try:
-            try:
-                proc.wait(timeout=600)  # 10 min hard ceiling
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                logger.error("dispatch subprocess killed after 600s for ticket %s", ticket_id)
-                backlog.update_ticket(ticket_id, {"status": "pending"})
-                return
-            finally:
-                log_file.close()
-
-            stdout = log_path.read_text()
-            if proc.returncode == 0:
-                match = re.search(r"session\s*:\s*([\w-]+)", stdout)
-                session_id = match.group(1) if match else "unknown"
-                backlog.mark_dispatched(ticket_id, session_id)
-                logger.info("dispatch ok for %s → %s", ticket_id, session_id)
-            else:
-                logger.error("dispatch failed for %s (rc=%d): %s", ticket_id, proc.returncode, stdout[:200])
-                backlog.update_ticket(ticket_id, {"status": "pending"})
+            proc.wait(timeout=600)  # 10 min hard ceiling
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            logger.error("dispatch subprocess killed after 600s for ticket %s", ticket_id)
+            backlog.update_ticket(ticket_id, {"status": "pending"})
+            return
         finally:
-            lock.release()
-            _cleanup_ticket_lock(ticket_id)
+            log_file.close()
+
+        stdout = log_path.read_text()
+        if proc.returncode == 0:
+            match = re.search(r"session\s*:\s*([\w-]+)", stdout)
+            session_id = match.group(1) if match else "unknown"
+            backlog.mark_dispatched(ticket_id, session_id)
+            logger.info("dispatch ok for %s → %s", ticket_id, session_id)
+        else:
+            logger.error("dispatch failed for %s (rc=%d): %s", ticket_id, proc.returncode, stdout[:200])
+            backlog.update_ticket(ticket_id, {"status": "pending"})
 
     threading.Thread(target=_wait, daemon=True, name=f"dispatch-{ticket_id[:8]}").start()
     return {"status": "ok", "detail": "dispatch started (async)"}
