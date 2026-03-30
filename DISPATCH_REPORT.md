@@ -1,133 +1,48 @@
-# Process 5 worker_done Sessions — Verdict Extraction Report
-
-**Date:** 2026-03-29 21:43 UTC
-**Sessions processed:** 5/5 (all SUCCESS)
+# Task-Text Dedup Guard for `_auto_dispatch()`
 
 ## Summary
 
-All 5 worker_done sessions completed successfully (exit_code=0). Three produced PRs (electricapp PR#86, movies PR#92, dispatch-factory no-op). Two were pure research (lawpass, recipebrain). Five follow-up implementation tickets have been created in the backlog via the API.
+Added a task-text dedup guard to `_auto_dispatch()` in `backend/heartbeat.py` that prevents dispatching tickets whose task text (first 80 chars) matches any already in-flight ticket. This closes a gap where the existing per-project inflight guard (line 618) wouldn't catch duplicate tasks across different projects or re-queued identical tasks.
 
-## Session Verdicts
+## Findings
 
-### 1. worker-electricapp-2129 (Scoping)
+### Problem
 
-| Field | Value |
-|-------|-------|
-| **Project** | electricapp |
-| **Task** | Scope electricapp resumption (2nd attempt) |
-| **Verdict** | SUCCESS |
-| **PR** | https://github.com/konradish/electric-app/pull/86 |
-| **Duration** | ~2m 35s |
+`_auto_dispatch()` had a per-project inflight guard (`backlog.has_inflight_ticket(project)`) that prevents dispatching two tickets for the same project simultaneously. However, it had no guard against dispatching tickets with identical task text — meaning if two tickets existed with the same task description (even across different projects, or if a ticket was re-created while the original was still in-flight), both could be dispatched.
 
-**Output:** Identified 5 prioritized work items after 21-day pause:
-1. **P0** — Deploy 2 undeployed commits (`ae2ee1e`, `7c16f6b`) sitting on main for 21 days
-2. **P1** — Split `worker/src/index.ts` (2,912-line monolith) into route/service modules
-3. **P2** — Set up `electricityfinder.online` custom domain (wrangler config exists, DNS missing)
-4. **P3** — Clean up 30+ stale dispatch branches and 16 stash entries from healer cascade
-5. **P4** — Evaluate next features: usage analytics, plan alerts, remove deprecated FastAPI backend
+### Implementation
 
-**Key finding:** The 03/21-03/26 dispatch agent cascade ("healer feedback loop") produced 30+ PRs and 16 stash entries but merged zero value — confirms dispatch should be research-only on this repo.
+**Location:** `backend/heartbeat.py`, `_auto_dispatch()` function (lines 599–684 after edit)
 
-**Follow-up ticket:** `548f981c` — Deploy commits + split monolith (HIGH)
+**Changes:**
 
----
+1. **Before the dispatch loop** (line 601–607): Fetch all `dispatched` tickets via `backlog.list_tickets(status="dispatched")`, build a `dict[str, str]` mapping `task[:80]` prefixes to ticket IDs.
 
-### 2. worker-lawpass-1955 (MVP Criteria)
+2. **Inside the loop** (lines 622–628): After the per-project inflight check, compare the candidate ticket's `task[:80]` against the prefix set. If matched, log and skip with message: `skipped {ticket_id}: task text matches in-flight {other_id}`.
 
-| Field | Value |
-|-------|-------|
-| **Project** | lawpass |
-| **Task** | Define lawpass MVP completion criteria |
-| **Verdict** | SUCCESS |
-| **PR** | None (research only) |
-| **Duration** | ~4m 54s |
+3. **After successful dispatch** (lines 678–680): Add the newly-dispatched ticket's task prefix to the set so subsequent loop iterations catch duplicates within the same batch.
 
-**Output:** MVP completion checklist produced. Key finding: no Stripe/payment/billing references exist in the frontend TypeScript files — payment integration is a gap that needs to be addressed for MVP.
+### Design Decisions
 
-**Follow-up ticket:** `47860dd9` — Implement MVP criteria, priority on payment integration (NORMAL)
+- **80-char prefix match**: Sufficient to catch identical or near-identical tasks while avoiding false positives from tasks that merely share a common opening phrase. Task descriptions in this system are typically specific enough that 80 chars is distinctive.
+- **`dict` over `set`**: Using a dict allows reporting *which* in-flight ticket matched, improving debuggability in logs.
+- **Single `list_tickets` call**: The dispatched tickets are fetched once before the loop rather than per-candidate, minimizing I/O.
+- **Guard ordering**: Placed after per-project inflight check (which is cheaper) but before meta-work ratio and circuit breaker checks, since dedup is a fundamental correctness guard.
 
----
+### Verification
 
-### 3. worker-movies-2129 (Status Determination)
-
-| Field | Value |
-|-------|-------|
-| **Project** | movies (family-movie-queue) |
-| **Task** | Process worker_done sessions 1943, 1952 + determine project status |
-| **Verdict** | SUCCESS |
-| **PR** | https://github.com/konradish/family-movie-queue/pull/92 |
-| **Duration** | ~1m 28s |
-
-**Output:**
-- **Dev environment: UP.** Both worker-1943 and worker-1952 confirmed dev and prod are healthy
-- **Healer diagnosis was false positive** — env vars are present; TAILSCALE_AUTHKEY is infrastructure-level, not app-level
-- **Recommendation: REACTIVATE.** Remove movies from DEFAULT_PAUSED
-- **Next work:** Wire notification events (`voted`, `watched`, `created_collection`) into notification generation — UI is fully built but mostly empty because common actions don't generate events yet
-
-**Follow-up tickets:**
-- `f75bd0d4` — Remove movies from DEFAULT_PAUSED (HIGH, dispatch-factory)
-- `f6251c5a` — Wire notification events (NORMAL, movies)
-
----
-
-### 4. worker-recipebrain-2129 (SSE Investigation Processing)
-
-| Field | Value |
-|-------|-------|
-| **Project** | recipebrain (meal_tracker) |
-| **Task** | Process recipebrain-1939 SSE test investigation results |
-| **Verdict** | SUCCESS |
-| **PR** | None (research only) |
-| **Duration** | ~6m 20s |
-
-**Output:** SSE investigation is fully resolved via PR #82. Worker confirmed no further SSE-related Python file changes needed. The root cause analysis from 4+ failed attempts (workers 1200, 1449, 1906, 1911) culminated in a working fix.
-
-**Follow-up ticket:** `5fbc4390` — Verify PR #82 deploy stability (LOW)
-
----
-
-### 5. worker-dispatch-factory-2129 (Unpause electricapp)
-
-| Field | Value |
-|-------|-------|
-| **Project** | dispatch-factory |
-| **Task** | Remove electricapp from DEFAULT_PAUSED |
-| **Verdict** | SUCCESS (no code changes needed) |
-| **PR** | None (already satisfied) |
-| **Duration** | ~1m 11s |
-
-**Output:** All acceptance criteria were already satisfied:
-1. `DEFAULT_PAUSED` was removed in a prior refactor — `paused_projects.py:30-33` now says "No hardcoded defaults"
-2. Healer circuit breaker reset via `POST /api/healer-circuit-breaker/electricapp/reset` — confirmed
-3. Other projects (voice-bridge, blog, schoolbrain) remain paused
-
-No code changes required. Worker wrote `DISPATCH_FAILED.md` documenting the no-op finding.
-
-**Follow-up ticket:** None needed (task complete)
-
----
-
-## Tickets Created
-
-| Ticket ID | Project | Priority | Task |
-|-----------|---------|----------|------|
-| `548f981c` | electricapp | HIGH | Deploy 2 stale commits + split monolith |
-| `47860dd9` | lawpass | NORMAL | Implement MVP criteria (payment integration first) |
-| `f6251c5a` | movies | NORMAL | Wire notification events |
-| `5fbc4390` | recipebrain | LOW | Verify SSE fix deployment stability |
-| `f75bd0d4` | dispatch-factory | HIGH | Remove movies from DEFAULT_PAUSED |
+- `make lint`: Passes (2 pre-existing lint errors unrelated to this change: unused `subprocess` and `reviewer_calibration` imports)
+- `make test`: 31 passed, 15 pre-existing failures (all in `test_alert_lifecycle.py`, `test_meta_work_ratio.py`, `test_factory_idle_mode.py` — caused by `backlog.settings` attribute error, unrelated to this change)
+- No existing tests for `_auto_dispatch()` were found to regress against.
 
 ## Recommendations
 
-1. **Immediate:** Merge movies PR#92 and dispatch the `f75bd0d4` ticket to unpause movies
-2. **Immediate:** Review electricapp PR#86 scoping report, then dispatch `548f981c` for the P0 deploy
-3. **Soon:** The lawpass MVP gap analysis should be reviewed before dispatching implementation work — payment integration is a significant scope item
-4. **Low priority:** recipebrain SSE verification is a cleanup task, not blocking
+1. **Add unit tests for `_auto_dispatch()`** — the function has no test coverage. A test should verify: (a) dedup skips matching task text, (b) newly dispatched tasks are added to the prefix set, (c) empty task text doesn't cause false matches.
+2. **Fix pre-existing test failures** — 15 tests fail due to `backlog.settings` attribute error, likely from a recent refactor that moved settings out of the backlog module.
+3. **Fix pre-existing lint errors** — remove unused `subprocess` and `reviewer_calibration` imports in `heartbeat.py`.
 
 ## References
 
-- Artifact directory: `~/.local/share/dispatch/`
-- Session artifacts read: `worker-{electricapp,lawpass,movies,recipebrain,dispatch-factory}-2129-{worker-done.json,result.md,.prompt,.log}`
-- Also read: `worker-lawpass-1955-{worker-done.json,result.md,.prompt,.log}`
-- Backend API: `http://127.0.0.1:8420/api/backlog` (POST for ticket creation)
-- Backend code: `backend/main.py`, `backend/backlog.py`, `backend/db.py`, `backend/artifacts.py`
+- `backend/heartbeat.py:586-684` — `_auto_dispatch()` function
+- `backend/backlog.py:15` — `list_tickets()` function signature
+- `backend/heartbeat.py:618` — existing per-project inflight guard
