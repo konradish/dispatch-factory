@@ -96,12 +96,13 @@ def _beat() -> list[str]:
     # 1. Process completed workers (post-worker pipeline stages)
     #    Runs BEFORE zombie GC so that pipeline_runner can write -result.md
     #    artifacts before sessions are marked abandoned.
-    try:
-        import pipeline_runner
-        for completion in pipeline_runner.scan_for_completions():
+    import pipeline_runner
+    for completion in pipeline_runner.scan_for_completions():
+        try:
             actions.extend(pipeline_runner.process_worker_completion(completion))
-    except Exception as e:
-        actions.append(f"pipeline_runner error: {e}")
+        except Exception as e:
+            actions.append(f"process_worker_completion error for {completion}: {e}")
+            logger.exception("Failed to process completion %s", completion)
 
     # 2. Garbage-collect zombie sessions (running state, no active worker)
     actions.extend(_gc_zombie_sessions())
@@ -458,7 +459,7 @@ def _gc_zombie_sessions() -> list[str]:
 
     for session in all_sessions:
         sid = session["id"]
-        if session["state"] != "running":
+        if session["state"] not in ("running", "planning"):
             continue
         if sid in active_ids:
             continue  # Worker is still alive
@@ -610,6 +611,16 @@ def _auto_dispatch() -> list[str]:
         if backlog.has_inflight_ticket(ticket["project"]):
             actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
             continue
+
+        # Duplicate-dispatch guard: skip if ticket already has a running session.
+        # Belt-and-suspenders — _dispatch_async also checks, but catching it here
+        # avoids unnecessary work and logging noise.
+        existing_sid = ticket.get("session_id")
+        if existing_sid:
+            session = artifacts.get_session(existing_sid)
+            if session and session.get("state") == "running":
+                actions.append(f"skipped {ticket['id']}: session {existing_sid} already running")
+                continue
 
         # Meta-work ratio: block dispatch-factory work when ratio is too high
         if ticket["project"] == "dispatch-factory" and meta_work_ratio.is_blocked(ticket.get("priority", "normal")):
