@@ -95,6 +95,7 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
         return {"status": "error", "detail": str(e)}
 
     def _wait():
+        dispatched_ok = False
         try:
             try:
                 proc.wait(timeout=600)  # 10 min hard ceiling
@@ -112,6 +113,7 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
                 if match:
                     session_id = match.group(1)
                     backlog.mark_dispatched(ticket_id, session_id)
+                    dispatched_ok = True
                     logger.info("dispatch ok for %s → %s", ticket_id, session_id)
                 else:
                     logger.error(
@@ -122,6 +124,13 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
             else:
                 logger.error("dispatch failed for %s (rc=%d): %s", ticket_id, proc.returncode, stdout[:200])
                 backlog.update_ticket(ticket_id, {"status": "pending"})
+        except Exception as exc:
+            logger.exception("unexpected error in _wait for %s", ticket_id, exc_info=exc)
+            if not dispatched_ok:
+                try:
+                    backlog.update_ticket(ticket_id, {"status": "pending"})
+                except Exception:
+                    logger.exception("failed to reset ticket %s to pending", ticket_id)
         finally:
             lock.release()
             _cleanup_ticket_lock(ticket_id)
