@@ -80,6 +80,7 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
         _cleanup_ticket_lock(ticket_id)
         raise
 
+    log_file = None
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
         log_file = open(log_path, "w")
@@ -87,7 +88,8 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
             cmd, stdout=log_file, stderr=subprocess.STDOUT,
         )
     except Exception as e:
-        log_file.close()
+        if log_file:
+            log_file.close()
         backlog.update_ticket(ticket_id, {"status": "pending"})
         lock.release()
         _cleanup_ticket_lock(ticket_id)
