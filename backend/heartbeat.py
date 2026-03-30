@@ -246,8 +246,54 @@ def _reconcile_backlog() -> list[str]:
             actions.extend(circuit_breaker.record_result(project, success=False))
         elif state == "worker_done":
             # Worker finished but result.md not yet written by process_worker_completion.
-            # Skip — let scan_for_completions handle it on the next heartbeat cycle.
-            logger.warning("ticket %s session %s in worker_done — deferring to next cycle", ticket["id"], session_id)
+            # Check how long it's been stuck — if >5 min, force one retry then fail.
+            worker_done_file = artifacts._artifacts_path() / f"{session_id}-worker-done.json"
+            worker_done_age = 0.0
+            if worker_done_file.is_file():
+                try:
+                    worker_done_age = time.time() - worker_done_file.stat().st_mtime
+                except OSError:
+                    pass
+
+            if worker_done_age <= 300:
+                # Still fresh — let scan_for_completions handle it on the next heartbeat cycle.
+                logger.warning("ticket %s session %s in worker_done — deferring to next cycle", ticket["id"], session_id)
+            else:
+                # Stuck >5 min — force one retry of process_worker_completion
+                logger.warning(
+                    "ticket %s session %s stuck in worker_done for %.0fs — forcing completion retry",
+                    ticket["id"], session_id, worker_done_age,
+                )
+                import pipeline_runner
+                try:
+                    done_data = {}
+                    try:
+                        import json as _json
+                        done_data = _json.loads(worker_done_file.read_text())
+                    except (OSError, ValueError):
+                        pass
+                    done_data["_session_id"] = session_id
+                    retry_actions = pipeline_runner.process_worker_completion(done_data)
+                    actions.extend(retry_actions)
+                    actions.append(f"worker_done escalation: retried {session_id} after {worker_done_age/60:.0f}m")
+                except Exception as e:
+                    logger.error(
+                        "worker_done escalation failed for %s: %s — writing error result and marking failed",
+                        session_id, e,
+                    )
+                    try:
+                        pipeline_runner._write_result(
+                            session_id,
+                            f"FAILED (worker_done stuck {worker_done_age/60:.0f}m, retry error: {e})",
+                            "",
+                            "",
+                        )
+                    except Exception:
+                        logger.exception("failed to write error result for stuck worker_done %s", session_id)
+                    backlog.mark_completed(ticket["id"], "failed")
+                    actions.append(
+                        f"worker_done escalation: {session_id} failed after {worker_done_age/60:.0f}m — marked failed"
+                    )
 
     return actions
 
