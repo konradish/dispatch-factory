@@ -1,47 +1,39 @@
-# Ops Report: Add max_verification_depth to pipeline
+# Dispatch Ops Report: Auto-Verification Ticket Creation
 
-**Date:** 2026-03-30
-**Task:** Prevent runaway verification chains that consume multiple workers for a single issue
+**Date:** 2026-03-29
+**Task:** Add auto-verification ticket creation for deploy and fix tasks
 
-## Problem
+## Summary
 
-The electricapp deploy status question triggered a 4-deep verification chain consuming 5 workers:
-1. Original ticket dispatched -> healer intervenes -> verify ticket created
-2. Verify ticket dispatched -> healer intervenes again -> another verify ticket
-3. Chain continues 4 deep, each spawning a new worker
-
-Root cause: `_escalate_healed_unverified()` and `_check_healed_but_failed()` in heartbeat.py create new tickets unconditionally, with no awareness of prior verify tickets for the same project.
+Added automatic P1 verification ticket creation in `_reconcile_backlog()` for any completed session whose task text contains "deploy" or "fix" keywords. This ensures deploy/fix tasks get explicit follow-up verification, matching the existing pattern for healer-triggered verifications.
 
 ## Changes
 
-### 1. `backend/config.py` — Added `max_verification_depth` field
+### `backend/heartbeat.py`
 
-- Added `max_verification_depth: int = 2` to `HeartbeatConfig` dataclass
-- Default value of 2 means at most 2 verify/escalation tickets can chain before the system stops spawning workers
+1. **Added `import re`** at module top
 
-### 2. `.dispatch-factory.example.toml` — Documented new setting
+2. **Added `_DEPLOY_FIX_RE` pattern and `_maybe_create_auto_verify_ticket()` function** (after `_session_was_healed()`):
+   - Compiled regex `\b(deploy|fix)\b` (case-insensitive) for keyword matching
+   - Creates a ticket with `priority="urgent"`, `source="auto-verify"`, `task_type="verify"`
+   - Task text includes project, session ID, and truncated original task (200 chars)
+   - Returns action log entries for heartbeat reporting
 
-- Added `max_verification_depth = 2` with explanatory comment to `[heartbeat]` section
-
-### 3. `backend/heartbeat.py` — Depth check + guards
-
-**New functions:**
-- `_verification_depth_exceeded(project)`: Counts tickets with verify sources (`healer-verification`, `healer`, `healer-circuit-breaker`) for the same project. Counts pending/dispatching/dispatched tickets plus completed/failed tickets within the last hour. Returns True if count >= max_verification_depth.
-- `_write_depth_exceeded_result(session_id, project, reason)`: Writes a result.md via `pipeline_runner._write_result()` with `VERIFICATION_DEPTH_EXCEEDED` status so the session gets a final artifact instead of dangling.
-
-**Guards added to:**
-- `_escalate_healed_unverified()`: If depth exceeded, writes result.md, clears the healed session from dashboard alerts, and returns without creating a new ticket.
-- `_check_healed_but_failed()`: If depth exceeded, writes result.md and returns without creating a root-cause ticket.
+3. **Wired into completion branches** in `_reconcile_backlog()`:
+   - After successful "deployed" state (non-healed path)
+   - After successful "completed" state (non-healed path)
+   - NOT added to healed paths (those already have their own escalation logic)
+   - NOT added to error/abandoned paths (failed tasks don't need verification)
 
 ## Verification
 
-- `uv run ruff check .` — all backend checks pass
-- `uv run python -c "import config; print(config.settings.heartbeat.max_verification_depth)"` — prints `2`
-- Frontend lint errors are pre-existing and unrelated
+- `ruff check` on backend: **All checks passed**
+- `pytest` on related test files (healer_circuit_breaker, post_heal_verify): **13/13 passed**
+- Pre-existing frontend lint errors and unrelated test failures confirmed unchanged
 
-## Risk Assessment
+## Design Decisions
 
-- **Low risk**: Only affects automated ticket creation in the heartbeat reconciliation loop
-- **No data loss**: Sessions still get a result.md artifact with clear status
-- **Configurable**: Operators can adjust `max_verification_depth` in `.dispatch-factory.toml`
-- **Backward compatible**: Default of 2 is a new constraint but prevents known-bad behavior
+- Used `urgent` priority (P1) as specified in the task
+- Only triggers on successful completions — failed/abandoned tasks don't get verification tickets
+- Skips healed sessions since they already have `_escalate_healed_unverified()` / `_verify_healed_deploy()`
+- Word-boundary regex prevents false matches (e.g., "prefix" won't match "fix")
