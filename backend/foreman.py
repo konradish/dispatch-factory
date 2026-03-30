@@ -35,7 +35,7 @@ def _dispatch_async(cmd: list[str], ticket_id: str) -> dict:
     that waits for exit, parses session ID, and calls mark_dispatched.
     The heartbeat picks up completion artifacts independently.
     """
-    backlog.update_ticket(ticket_id, {"status": "dispatching"})
+    backlog.update_ticket(ticket_id, {"status": "dispatching", "dispatched_at": time.time()})
     try:
         log_path = Path(tempfile.gettempdir()) / f"dispatch-{ticket_id[:8]}.log"
         log_file = open(log_path, "w")
