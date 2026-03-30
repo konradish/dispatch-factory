@@ -171,7 +171,9 @@ def _update_session_state(session_id: str) -> None:
         for suffix, name in ARTIFACT_TYPES.items():
             if suffix_part == suffix:
                 artifact_types.append(name)
-                if name != "result":
+                if name == "result":
+                    artifacts_data[name] = True  # boolean presence, not JSON
+                else:
                     artifacts_data[name] = _read_json(entry)
                 break
         if suffix_part == ".log":
