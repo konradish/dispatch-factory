@@ -598,6 +598,14 @@ def _auto_dispatch() -> list[str]:
     dispatched_count = 0
     pending = backlog.list_tickets(status="pending") + backlog.list_tickets(status="ready")
 
+    # Build set of in-flight task prefixes for dedup guard
+    inflight_tickets = backlog.list_tickets(status="dispatched")
+    inflight_prefixes: dict[str, str] = {}  # task[:80] -> ticket_id
+    for t in inflight_tickets:
+        prefix = t.get("task", "")[:80]
+        if prefix:
+            inflight_prefixes[prefix] = t["id"]
+
     # Sort by priority like next_pending does
     priority_order = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
     pending.sort(key=lambda t: (priority_order.get(t.get("priority", "normal"), 2), t["created_at"]))
@@ -609,6 +617,14 @@ def _auto_dispatch() -> list[str]:
         # Pre-dispatch guard: skip if project already has an in-flight ticket
         if backlog.has_inflight_ticket(ticket["project"]):
             actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
+            continue
+
+        # Task-text dedup guard: skip if task prefix matches any in-flight ticket
+        task_prefix = ticket.get("task", "")[:80]
+        if task_prefix and task_prefix in inflight_prefixes:
+            other_id = inflight_prefixes[task_prefix]
+            logger.info("skipped %s: task text matches in-flight %s", ticket["id"], other_id)
+            actions.append(f"skipped {ticket['id']}: task text matches in-flight {other_id}")
             continue
 
         # Meta-work ratio: block dispatch-factory work when ratio is too high
@@ -659,6 +675,9 @@ def _auto_dispatch() -> list[str]:
         if result["status"] == "ok":
             dispatched_count += 1
             actions.append(f"auto-dispatched {ticket['id']} (async)")
+            # Add to dedup set so subsequent candidates are checked
+            if task_prefix:
+                inflight_prefixes[task_prefix] = ticket["id"]
         else:
             actions.append(f"dispatch failed for {ticket['id']}: {result.get('detail', 'unknown')}")
 
