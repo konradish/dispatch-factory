@@ -272,6 +272,11 @@ def _maybe_create_auto_verify_ticket(ticket: dict, session_id: str) -> list[str]
         return []
 
     project = ticket.get("project", "unknown")
+
+    # Respect verification depth limits to prevent runaway verify chains.
+    if _verification_depth_exceeded(project):
+        return []
+
     verify_task = (
         f"Verify {project} after completed task (session {session_id}): {task_text[:200]}"
     )
@@ -307,7 +312,7 @@ def _verification_depth_exceeded(project: str) -> bool:
     answer 1 question about electricapp's deploy status).
     """
     max_depth = settings.heartbeat.max_verification_depth
-    verify_sources = {"healer-verification", "healer", "healer-circuit-breaker"}
+    verify_sources = {"healer-verification", "healer", "healer-circuit-breaker", "auto-verify"}
 
     # Count all verify-chain tickets for this project that are pending, dispatching,
     # dispatched, or recently completed/failed (within 1 hour).
