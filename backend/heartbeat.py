@@ -794,6 +794,12 @@ def _auto_dispatch() -> list[str]:
         if dispatched_count >= slots:
             break
 
+        # Task-type guard: skip verify tickets — dispatch binary doesn't support
+        # the 'verify' task type, so they fail silently and cycle forever.
+        if ticket.get('task_type') == 'verify':
+            actions.append(f"skipped {ticket['id']}: verify task_type not dispatchable")
+            continue
+
         # Pre-dispatch guard: skip if project already has an in-flight ticket
         if backlog.has_inflight_ticket(ticket["project"]):
             actions.append(f"skipped {ticket['id']}: {ticket['project']} already has in-flight ticket")
