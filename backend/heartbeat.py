@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import subprocess
 import time
 
 import artifacts
@@ -25,7 +24,6 @@ import factory_idle_mode
 import meta_work_ratio
 import paused_projects
 import post_heal_verify
-import reviewer_calibration
 from config import settings
 
 logger = logging.getLogger("dispatch-factory.heartbeat")
@@ -96,12 +94,14 @@ def _beat() -> list[str]:
     # 1. Process completed workers (post-worker pipeline stages)
     #    Runs BEFORE zombie GC so that pipeline_runner can write -result.md
     #    artifacts before sessions are marked abandoned.
-    try:
-        import pipeline_runner
-        for completion in pipeline_runner.scan_for_completions():
+    import pipeline_runner
+    for completion in pipeline_runner.scan_for_completions():
+        try:
             actions.extend(pipeline_runner.process_worker_completion(completion))
-    except Exception as e:
-        actions.append(f"pipeline_runner error: {e}")
+        except Exception as e:
+            sid = completion.get("_session_id", "unknown")
+            actions.append(f"pipeline_runner error for {sid}: {e}")
+            logger.warning("completion processing failed for %s: %s", sid, e)
 
     # 2. Garbage-collect zombie sessions (running state, no active worker)
     actions.extend(_gc_zombie_sessions())

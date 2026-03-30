@@ -58,7 +58,8 @@ def scan_for_completions() -> list[dict]:
             data = json.loads(entry.read_text())
             data["_session_id"] = session_id
             completions.append(data)
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("failed to parse %s: %s", entry.name, e)
             continue
 
     return completions
