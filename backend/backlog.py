@@ -11,6 +11,12 @@ import uuid
 
 import db
 
+_PRIORITY_ALIASES = {'P0': 'urgent', 'P1': 'high', 'P2': 'normal', 'P3': 'low'}
+
+
+def _normalize_priority(p: str) -> str:
+    return _PRIORITY_ALIASES.get(p, p)
+
 
 def list_tickets(status: str | None = None) -> list[dict]:
     """List all backlog tickets, optionally filtered by status."""
@@ -34,6 +40,7 @@ def create_ticket(
     task_type: str = "code",
 ) -> dict:
     """Create a new backlog ticket."""
+    priority = _normalize_priority(priority)
     ticket_id = uuid.uuid4().hex[:8]
     now = time.time()
     with db.get_conn() as conn:
@@ -77,6 +84,8 @@ def add_note(ticket_id: str, text: str, author: str = "human") -> dict | None:
 
 def update_ticket(ticket_id: str, updates: dict) -> dict | None:
     """Update a ticket by ID. Returns updated ticket or None if not found."""
+    if 'priority' in updates:
+        updates['priority'] = _normalize_priority(updates['priority'])
     # Map of fields that need JSON serialization
     json_fields = {"flags", "tags"}
     allowed = {"task", "project", "priority", "task_type", "flags", "tags", "status", "source",
