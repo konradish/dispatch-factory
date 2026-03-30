@@ -38,7 +38,7 @@ _state: dict = {
     "max_concurrent": settings.heartbeat.max_concurrent,
     "enabled": settings.heartbeat.enabled,
     "interval_minutes": settings.heartbeat.interval_minutes,
-    "foreman_every_n_beats": 5,  # Default: every 5th beat (~2.5 min). Set higher to save quota.
+    "foreman_every_n_beats": 20,  # Every 20th beat (~10 min). Was 5. Raised to conserve quota.
 }
 
 
