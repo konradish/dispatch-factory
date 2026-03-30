@@ -171,7 +171,9 @@ def _update_session_state(session_id: str) -> None:
         for suffix, name in ARTIFACT_TYPES.items():
             if suffix_part == suffix:
                 artifact_types.append(name)
-                if name != "result":
+                if name == "result":
+                    artifacts_data[name] = True  # sentinel, don't parse as JSON
+                else:
                     artifacts_data[name] = _read_json(entry)
                 break
         if suffix_part == ".log":
@@ -370,7 +372,7 @@ def list_sessions_with_timestamps() -> list[dict]:
     # Refresh state for sessions marked "running" in cache
     active_ids = {s["id"] for s in get_active_sessions()}
     with db.get_conn() as conn:
-        running = conn.execute("SELECT id FROM sessions WHERE state IN ('running', 'worker_done', 'planning') LIMIT 40").fetchall()
+        running = conn.execute("SELECT id FROM sessions WHERE state IN ('running', 'worker_done', 'planning') LIMIT 100").fetchall()
     for r in running:
         sid = r["id"]
         _update_session_state(sid)
@@ -378,7 +380,7 @@ def list_sessions_with_timestamps() -> list[dict]:
         # But only if: no worker_done artifact exists, and session is old enough
         with db.get_conn() as conn:
             row = conn.execute("SELECT state FROM sessions WHERE id = ?", (sid,)).fetchone()
-            if row and row["state"] == "running" and sid not in active_ids:
+            if row and row["state"] in ("running", "planning") and sid not in active_ids:
                 # Skip if worker_done artifact exists (worker finished, pipeline will pick it up)
                 worker_done_file = _artifacts_path() / f"{sid}-worker-done.json"
                 if worker_done_file.is_file():
